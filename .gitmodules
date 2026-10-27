@@ -1,6 +1,8 @@
 [submodule "upstream/tvcache-rust"]
 	path = upstream/tvcache-rust
 	url = https://github.com/abhivijay96/tvcache-rust
+	ignore = untracked
 [submodule "upstream/tvclient"]
 	path = upstream/tvclient
 	url = https://github.com/abhivijay96/tvclient
+	ignore = untracked
