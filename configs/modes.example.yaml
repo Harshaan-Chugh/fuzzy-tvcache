@@ -1,0 +1,8 @@
+# Cache mode selection (documentation only; not yet consumed by code).
+# Copy to configs/local.yaml (gitignored) to customize.
+mode: exact            # one of: none | exact | canonical | relevant_state
+tvcache:
+  host: 127.0.0.1
+  port: 7878
+validation:
+  sample_rate: 0.1     # fraction of fuzzy hits re-executed in the requesting rollout's state

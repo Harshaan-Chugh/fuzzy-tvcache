@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Rust
+target/
+
+# Secrets / local config
+.env
+.env.*
+*.pem
+*.key
+configs/local*.yaml
+slurm/local.env
+
+# Experiment output (keep on $SCRATCH, not in git)
+results/
+data/
+outputs/
+checkpoints/
+wandb/
+rollouts/
+*.log
+slurm-*.out
+*.parquet
+*.ckpt
+*.pt
+*.safetensors
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
