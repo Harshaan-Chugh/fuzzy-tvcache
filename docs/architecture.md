@@ -53,6 +53,46 @@ The server is a **semantics-free string trie**. It never parses a tool call.
 - `Sandbox` (`tvclient/sandbox.py`): `start / fork / execute / stop`. `fork()` returns a cold
   immutable snapshot handle.
 
+### Terminal workload backend (`bhaskar792/container-manager-public`)
+
+Read at commit `51a90bb` (not a submodule; Apache-2.0). It is a terminal-bench fork plus a Flask
+HTTP server, `rlhf_server/server.py`, that runs Docker containers for RL frameworks such as verl.
+
+- **It does not use tvclient.** It has no `ToolCall`/`Sandbox` subclass and no `to_dict()`. The
+  glue that wraps this server for TVCache lives elsewhere (presumably Bhaskar's verl integration)
+  and has not been inspected yet.
+- HTTP API: `/start` (`task_name`, `rollout_id`), `/execute` (`id`, `command`, `blocking`,
+  `timeout`) at `server.py:359`, `/get_pane_logs` (`id`) at `server.py:449`, `/fork`,
+  `/fork_async`, `/test`, `/solve`, `/stop`.
+- A terminal tool call is therefore most likely a **raw bash string** (`command`). The exact
+  `to_dict()` schema is unconfirmed.
+
+Implications for our design:
+
+1. **The shell session persists.** Commands are typed into a long-lived tmux shell in the
+   container, so `cd` in one call changes how later relative paths resolve. **cwd is state**:
+   filesystem canonicalization needs it as context, and the state tracker must treat `cd` as a
+   write to it. The server already has `get_curr_dir_from_tmux_session` (`server.py:289`).
+2. **Output may include the whole history.** `/get_pane_logs` returns the entire captured tmux
+   pane: earlier commands, their outputs and prompts, plus pre-fork logs when caching is enabled.
+   If the cached value is the full pane, it embeds the full history and can **never** be reused
+   across different histories. Fuzzy reuse requires the workload's `Sandbox.execute` to return
+   only the current command's output. **This is unverified and is the largest open risk.**
+3. **Multi-line commands are joined with `&&`** (`server.py:382`), and one `command` may be an
+   arbitrary script. Expect most calls to be "unknown" to the filesystem canonicalizer.
+   Only simple `cat`/`ls` calls are candidates.
+4. `/hash` (`server.py:597`) is a stub that returns `"1111"`. It looks like a planned state-hash
+   endpoint, which is relevant to state identity (`state-tracking.md`).
+
+Questions for Bhaskar:
+
+- Where is the `ToolCall`/`Sandbox` glue for terminal-bench and for SkyRL-SQL?
+- Is the cached value the full pane log, or only the current command's output?
+- What does a SQL tool call look like, and does any SQL workload include writes? The paper's
+  SkyRL-SQL workload is read-only (§4.2).
+- Where do the containers run relative to Perlmutter GPU nodes? Docker is generally not available
+  on NERSC compute nodes.
+
 ## 2. What exact matching actually misses
 
 Read-only calls do **not** break matching *if* the workload marks them
@@ -70,7 +110,7 @@ Read-only calls do **not** break matching *if* the workload marks them
    `will_mutate_state()` at `True` because arbitrary bash can mutate state. Then a `cat` or `ls`
    *extends the chain*, and every later key depends on which reads the agent happened to do and
    in what order. (Confirm per workload which `ToolCall` subclass is used and how it classifies
-   calls. See the container-manager repo.)
+   calls. container-manager does not define one; see above.)
 4. **Mutation order.** Two independent mutations applied in different orders give different keys,
    even when they commute. This is lower priority and probably out of scope.
 
