@@ -1,39 +1,89 @@
-# Shared interfaces (DRAFT — to be designed by Harshaan)
+# Shared interfaces (v0)
 
-Code location: `src/fuzzytv/interfaces.py` (currently an empty stub).
+Code: `src/fuzzytv/interfaces.py`. Tests: `tests/unit/test_interfaces.py`.
 
 The split of responsibility:
 **Kevin (`sql/`) and Etienne (`fs/`) determine what a call means and which state it reads and
-writes. Harshaan (`state/`) decides whether a cached result is reusable.**
+writes. Harshaan (`state/`) decides whether a cached result is reusable.** A canonicalizer sees one
+call and no history; the state tracker sees the history and builds cache keys.
 
-## What the contract must express
+## The contract
 
-A canonicalizer takes a tool call (plus context such as cwd and database) and returns something
-like an analysis result. It must carry at least:
+```python
+class Canonicalizer(Protocol):
+    def analyze(self, call: dict[str, Any], ctx: CallContext) -> CallAnalysis: ...
+```
 
-| Concept | Notes |
+| Field of `CallAnalysis` | Meaning |
 |---|---|
-| Canonical call identity | A stable string for the normalized call. Equivalent surface forms must map to the same string, and non-equivalent forms must not. |
-| Read dependencies | State components the output depends on (e.g. `sql:table:<db>.<t>`, `fs:file:<abs path>`, `fs:dir:<abs path>`). Needs a shared naming scheme. |
-| Write dependencies | State components the call mutates. Used to advance state identity. |
-| Unknown / unrestricted | A way to say "may read or write anything". This forces exact fallback. |
-| Fuzzy-safe flag + reason | Why fuzzy reuse is disallowed (unsupported command, volatile output, parse failure, schema change, transaction, symlink, ...). Rohan logs these. |
+| `canonical` | Normalized call string. Equivalent calls give identical strings. `None` if it can't be canonicalized. Used only for cache keys, never executed. |
+| `reads` | State-key names the output depends on. |
+| `writes` | State-key names the call may change. |
+| `reads_unknown` | The call may read things not listed (unsupported command, time, network). |
+| `writes_unknown` | The call may write things not listed. The state tracker treats all state as unreliable afterwards. |
+| `reason` | Why the call is not fuzzy-eligible, e.g. `"unsupported command: python"`. For logs and evaluation. |
+| `fuzzy_eligible` (property) | Canonical, no unknowns, no writes. Only these calls may be served by a fuzzy hit. |
+
+`unknown(reason)` is shorthand for "may read and write anything". It's the safe default.
+
+`CallContext` carries `cwd` and `database`, either of which may be `None` (unknown).
+
+## State-key names
+
+Build these with the helpers `sql_table`, `fs_file`, `fs_dir` and `CWD`, never by hand.
+
+| Name | Covers |
+|---|---|
+| `sql:table:<db>.<table>` | Rows **and** schema. DDL on a table is a write to this key. |
+| `fs:file:<abs path>` | Contents and existence of a file. |
+| `fs:dir:<abs path>` | Set of entry names in a directory. Creating or deleting a file writes its parent directory. |
+| `fs:cwd` | The shell's current directory. `cd` writes it. |
+
+## Decisions (2026-10-31)
+
+- **A.** A schema change is a write to the same `sql:table` key as a data change.
+- **B.** There are two unknown flags. A read-only but unsupported call (e.g. `grep`) sets only
+  `reads_unknown`. It isn't eligible, but it doesn't make later calls in the rollout ineligible.
+- **C.** With `cwd=None`, a relative path is unanalyzable, so set `reads_unknown` (and
+  `writes_unknown` for writes).
+- A call may both read and write (e.g. `UPDATE ... WHERE`). List both, honestly.
+- State keys are strings.
+
+## Worked examples (cwd = `/app`, database = `main`)
+
+These are the target outputs for the canonicalizers. Turn them into tests in `tests/unit/`.
+
+| Call | canonical | reads | writes | flags / reason |
+|---|---|---|---|---|
+| `SELECT name FROM users WHERE id=1` | `SELECT name FROM users WHERE id = 1` | `sql:table:main.users` | — | eligible |
+| `select name\nfrom users where id=1` | same as above | same | — | eligible |
+| `UPDATE employees SET salary=1 WHERE id=1` | normalized | `sql:table:main.employees` | `sql:table:main.employees` | — |
+| `SELECT * FROM a JOIN b ON …` | normalized | `…main.a`, `…main.b` | — | eligible |
+| `SELECT NOW()` | — | — | — | `reads_unknown`, `"volatile"` |
+| `ALTER TABLE users ADD c INT` | normalized | — | `sql:table:main.users` | — |
+| unparseable SQL | `None` | — | — | `unknown("sql parse failed")` |
+| `cat ./data/f.txt` | `cat /app/data/f.txt` | `fs:file:/app/data/f.txt` | — | eligible |
+| `cat a.txt b.txt` | `cat /app/a.txt /app/b.txt` | both files | — | eligible |
+| `ls /app` | `ls /app` | `fs:dir:/app` | — | eligible |
+| `ls -l /app` | — | — | — | `reads_unknown`, `"unsupported flag -l"` |
+| `echo hi > a.txt` | `echo hi > /app/a.txt` | — | `fs:file:/app/a.txt`, `fs:dir:/app` | — |
+| `cd data` | `cd /app/data` | — | `fs:cwd` | — |
+| `grep foo a.txt` | `None` | — | — | `reads_unknown`, `"unsupported command: grep"` |
+| `cat *.txt` | — | — | — | `unknown("glob")` |
+| `python run.py` | — | — | — | `unknown("unsupported command: python")` |
 
 ## Requirements from upstream (see `architecture.md`)
 
-- The input is a tvclient `ToolCall`. Today it only has `to_dict()`, `serialize()` and
-  `will_mutate_state()`. Canonicalizers need tool type and arguments out of `to_dict()`, and the
-  dict schema is workload-specific.
-- Context beyond the call matters: cwd for fs, current database/schema for SQL. Decide whether
-  that context is passed in or tracked by `state/`.
-- The output must be pure and deterministic: no I/O, no sandbox access. That makes it unit
-  testable and cheap.
-- Any failure, exception or unsupported construct must map to "unknown". Never guess.
-- Keep it to plain dataclasses or functions unless evidence says otherwise.
+- The workload's `to_dict()` schema is unconfirmed (ask Bhaskar), so `call` is a plain dict for now.
+- In the terminal workload the shell session persists, so `cd` mutates cwd.
+- Terminal calls are likely raw bash strings, possibly multi-line scripts joined with `&&`.
+  Anything other than a simple supported command must analyze to "unknown".
+- Precondition for any fuzzy hit: the cached value must be the call's own output, not
+  accumulated terminal/pane history. This is unverified for the terminal workload.
 
 ## Open questions
 
-- Is the state-key vocabulary strings, or typed tuples?
-- Is one call allowed to be both a read and a write (e.g. `UPDATE ... WHERE` reads the table)?
-- Who owns the dispatch from tool type to canonicalizer?
+- Who dispatches a call to the SQL or fs canonicalizer? This depends on the `to_dict()` schema.
+- How does the state tracker learn the new cwd after `cd`? Probably from `canonical`, or we add a
+  field later.
 - Does Rohan's harness consume the same analysis objects to explain false hits?
