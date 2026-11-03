@@ -117,24 +117,49 @@ Read-only calls do **not** break matching *if* the workload marks them
 TODO(Harshaan/Rohan): turn 1–3 into concrete traces under `eval/workloads/` and confirm the miss
 against a running server.
 
-## 3. Integration points (candidates, not decisions)
+## 3. Python integration
 
-Because the server is semantics-free and the key is built in one place
-(`executor.py:110-111`), the natural integration is **client-side, in Python**:
+Author: Harshaan Chugh.
 
-- Wrap or subclass `TvcacheToolExecutor` and override `lookup_or_execute`. Before the existing
-  exact lookup, try a fuzzy lookup. On a fuzzy miss or an unsafe call, fall through to the
-  unchanged exact path.
-- **Secondary index without server changes:** the server's isolation unit is an arbitrary
-  `task_id` string. A fuzzy index could use a derived namespace (e.g. `task_id + "::fuzzy"`) with
-  a single-element path `[fuzzy_key]` and `sandbox_id=None`. That reuses `Insert`/`Find`, TTL and
-  eviction as-is, and leaves the TCG topology and sandbox lifecycle untouched. A Rust-side index
-  is an option later if a cleaner upstream PR needs one.
-- **Fuzzy hit must not change sandbox state.** A fuzzy hit should behave like today's exact hit:
-  return the value and leave `rollout_sandbox`/`sandbox_history` alone. If the call itself mutates
-  state, skipping its execution would desynchronize the sandbox. So, at least initially, fuzzy
-  reuse should apply only to calls classified as non-mutating.
-- The exact TCG insert path stays as it is, so `exact` mode is upstream behavior byte-for-byte.
+`RelevantStateExecutor` extends upstream `TvcacheToolExecutor` and delegates its
+execution, snapshot, replay, and cleanup operations to upstream methods.
+`exact` mode continues to instantiate upstream `TvcacheToolExecutor` directly.
 
-Open questions for the interface design: where the relevant-state identity is computed (client
-only?), and how the fuzzy entry gets populated (on every exact insert of an eligible call?).
+The lookup sequence is:
+
+1. Analyze the original call using the injected canonicalizer and logical context.
+2. Compute its pre-call relevant-state key when eligible and explicitly enabled.
+3. Perform the existing exact lookup.
+4. On an exact miss, try the secondary index if a fuzzy key is available.
+5. On a fuzzy miss or unavailable secondary index, continue upstream execution.
+6. Observe the completed logical call once.
+7. Populate eligible successful results from exact hits or execution.
+
+Original calls, the serialized stateful chain, and sandbox history remain
+unchanged. Canonical strings are never executed. Reads conservatively marked
+stateful by the workload retain upstream history and replay behavior.
+
+The lookup adapter holds the exact result's sandbox lease while checking the
+secondary index. A secondary miss returns that original result to upstream.
+A secondary hit releases the exact lease and supplies a value-only result.
+A fuzzy hit therefore leaves the requesting live sandbox unchanged.
+
+The secondary index uses a separate client connection and a reserved task
+namespace derived from task ID, initial-state identity, and policy version.
+Its one-element paths contain fuzzy keys. Entries contain a versioned value
+envelope and never contain sandbox snapshots. Secondary runtime metadata is
+zero: it is not an execution-time measurement.
+
+All clients sharing the server must reserve the `__fuzzytv_relevant_v1__:`
+task prefix for this index. Ordinary task IDs must already isolate initial
+state for upstream exact behavior; secondary scoping cannot repair an
+incorrect upstream task boundary.
+
+Physical execution monitoring covers both replay and the current call.
+An execution exception, cancellation, or upstream failure result disables
+fuzzy reuse. Replay never advances logical lineage a second time.
+
+Canonicalizers and context are injected; this layer does not infer workload
+schemas or cwd. Terminal reuse remains opt-in until call-local result
+semantics are established. Controlled tests supply explicit fixture analyses
+and use actual temporary files and SQLite databases.

@@ -140,22 +140,36 @@ pre-write dependencies, deterministic sorted serialization, key field separation
 and stateless reads. This demonstrates the tracker/cache boundary; it does not
 exercise the real TVCache server, replay, or terminal integration.
 
-## Future integration boundary
+## Executor integration
 
-The candidate integration is a Python wrapper around `TvcacheToolExecutor`:
-try existing exact lookup first, then an eligible secondary fuzzy lookup; return
-a fuzzy result without changing the requesting sandbox; use normal TVCache on a
-miss or unsafe analysis; populate the fuzzy index only for eligible results.
-A derived task namespace and one-element path could reuse the Rust trie without
-changing its topology or sandbox lifecycle. This policy is not implemented here.
+`RelevantStateExecutor` uses this tracker with exact-first lookup. Its secondary
+namespace also includes a caller-supplied initial-state identity and policy
+version. Policy version must identify the canonicalization, dependency,
+eligibility, and output-format rules used to populate entries.
 
-The architecture document's older candidate suggests fuzzy lookup before exact.
-The agreed handoff specifies exact first; reconcile that candidate when doing real
-integration. The planned evaluation modes remain `none` (execute everything),
-`exact` (unmodified TVCache), `canonical` (normalized calls with full stateful
-history), and `relevant_state` (canonical call plus relevant-state identity).
+The executor requires every logical call in sequential append-only history.
+It observes completed calls once, including mutations returned by exact hits.
+Physical replay does not advance lineage. Execution failures during replay or
+the current call permanently disable fuzzy reuse.
 
-Before real integration, establish the actual workload call schema, reliable cwd
-context, call-local observable output, initial-state isolation, and observation
-ordering through exact hits and replay. Validate reused results in the requesting
-rollout's state, including failed mutations and sandbox lifecycle behavior.
+Missing or changed history, analysis/context failures, and potentially mutating
+calls omitted by upstream's replay classification also disable fuzzy reuse.
+The ordinary exact path remains available.
+
+A context provider must describe logical rollout context. Reading cwd from a
+lagging live sandbox is insufficient. The wrapper does not infer cwd transitions
+from canonical strings.
+
+Fuzzy reuse requires explicit confirmation that values are call-local.
+Accumulated terminal output remains unsupported. Eligible successful results
+from execution and exact hits populate a value-only secondary index; failed
+results do not. Secondary-cache availability failures fall back to upstream.
+
+The integration tests extend the A–D scenario through the real server and
+controlled sandboxes. D remains exact-only after an unknown write; ordinary
+exact hits are still permitted.
+
+Production workload integration still requires verified call schemas,
+initial-state isolation, logical context, complete dependency analyses, and
+call-local outputs. Lineage assumptions remain necessary even when controlled
+integration tests pass.
