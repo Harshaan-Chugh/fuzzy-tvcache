@@ -22,7 +22,7 @@ See docs/interfaces.md for worked examples.
 """
 
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 
 @dataclass(frozen=True)
@@ -63,6 +63,52 @@ class Canonicalizer(Protocol):
     """Implemented by sql/ (Kevin) and fs/ (Etienne)."""
 
     def analyze(self, call: dict[str, Any], ctx: CallContext) -> CallAnalysis: ...
+
+
+CacheSource = Literal["exact", "fuzzy", "execute"]
+
+
+@dataclass(frozen=True)
+class CacheScope:
+    """Identity of initial state and the complete analysis/output policy.
+
+    Ordinary task IDs must still satisfy upstream initial-state isolation.
+    """
+
+    initial_state_id: str
+    policy_version: str
+
+    def __post_init__(self) -> None:
+        if not self.initial_state_id or not self.policy_version:
+            raise ValueError("initial-state identity and policy version are required")
+
+
+@dataclass
+class CacheStats:
+    """Completed logical lookups; upstream execution counts include replay."""
+
+    exact_hits: int = 0
+    fuzzy_hits: int = 0
+    misses: int = 0
+    secondary_errors: int = 0
+
+
+@dataclass(frozen=True)
+class CacheDecision:
+    source: CacheSource
+    fuzzy_key: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class ValidationRecord:
+    decision: CacheDecision
+    returned_value: str
+    reference_value: str
+
+    @property
+    def matched(self) -> bool:
+        return self.returned_value == self.reference_value
 
 
 def unknown(reason: str) -> CallAnalysis:

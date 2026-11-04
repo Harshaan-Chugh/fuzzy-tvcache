@@ -25,9 +25,38 @@ The mode is chosen explicitly (config/CLI). `exact` must be the upstream behavio
 
 ## Validation
 
-Sample fuzzy hits at a configurable rate and re-execute them in the requesting rollout's sandbox.
-That sandbox is already fast-forwarded to the correct state, and the fuzzy-hit call is
-non-mutating, so re-executing it is safe. Log mismatches with the analysis and fallback reasons.
+The live cache-backed sandbox may lag logical history after exact or fuzzy hits.
+Do not assume it is materialized at the requesting rollout's current state.
+
+The controlled validation harness maintains a separate reference sandbox with
+equivalent initial state. It executes every original logical call in order,
+including calls served by exact and fuzzy hits, without consulting cache keys
+or cached snapshots. Compare the complete returned value strings.
+
+`ReferenceValidator` validates every call supplied to it and rejects skipped
+history. It records mismatches before raising an assertion failure. All fuzzy
+hits in correctness tests are validated; sampling is deferred to the workload
+evaluation harness.
+
+Report policy execution counts separately from reference executions.
+`CacheStats` counts completed logical exact hits, fuzzy hits, misses, and
+secondary-cache errors. Upstream `total_executions` includes physical replay.
+An exact miss followed by a fuzzy hit is an additional fuzzy hit.
+
+Default `pytest -q` runs server-free tests and skips server integration tests.
+Use a dedicated running server for:
+
+```bash
+pytest -q -s --run-tvcache-integration tests/integration
+```
+
+On Perlmutter, `slurm/cache-integration.sbatch` builds and starts a dedicated
+server on a compute node, runs tests, and writes logs under `$SCRATCH`.
+
+The controlled harness covers uncached reference execution, upstream exact
+lookup, and relevant-state lookup. The standalone `canonical` evaluation mode,
+representative workload benchmarks, sampling, and RL measurements remain
+subsequent evaluation work.
 
 Workloads must be reproducible: fixed traces or seeds, stored under `eval/workloads/` if small,
 otherwise on `$SCRATCH`.

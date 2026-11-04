@@ -14,7 +14,11 @@ adds a fuzzy lookup layer that does two things:
 
 It falls back to exact TVCache whenever safety can't be established.
 
-Status: **setup only.** No fuzzy matching is implemented yet. See [docs/roadmap.md](docs/roadmap.md).
+Status: relevant-state tracking and an exact-first Python integration layer.
+Controlled filesystem/SQLite validation is provided. Production SQL and terminal
+workload adapters remain to be connected and verified.
+See [docs/state-tracking.md](docs/state-tracking.md) and
+[docs/evaluation.md](docs/evaluation.md).
 
 | Who | Area | Code |
 |---|---|---|
@@ -38,6 +42,37 @@ docs/                   architecture, interfaces, state tracking, taxonomy, eval
 
 Start with [docs/architecture.md](docs/architecture.md). It covers how upstream TVCache works and
 where we plug in.
+
+## Relevant-state integration
+
+Use upstream `TvcacheToolExecutor` directly for `exact` mode.
+`fuzzytv.cache.RelevantStateExecutor` adds a secondary lookup after exact misses
+while retaining upstream execution and replay.
+
+Its caller supplies:
+
+- The workload's original `Sandbox` and `ToolCall` classes.
+- A canonicalizer implementing the shared `Canonicalizer` protocol.
+- A provider of authoritative logical `CallContext`.
+- `CacheScope(initial_state_id, policy_version)`.
+- Explicit `call_local_results=True` once that property is established.
+
+Call `lookup_or_execute()` with complete history plus the current call,
+one new logical call at a time. Use the executor as an async context manager.
+Canonicalized strings are used only as keys; original calls execute unchanged.
+
+The `__fuzzytv_relevant_v1__:` task prefix is reserved for secondary entries.
+All clients sharing the server must honor this reservation.
+
+Run server-free tests with `pytest -q`. Run controlled server integration tests
+against a dedicated server with:
+
+```bash
+pytest -q -s --run-tvcache-integration tests/integration
+```
+
+On Perlmutter, submit `slurm/cache-integration.sbatch` with allocation and
+constraint options supplied on the command line. Logs go under `$SCRATCH`.
 
 ## Upstream code and submodules
 
