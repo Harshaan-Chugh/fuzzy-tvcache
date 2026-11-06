@@ -13,7 +13,7 @@
 
 1. ✅ Eval harness (`src/fuzzytv/eval/`): traces, four modes, sampled validation, metrics, plots.
 2. ✅ Canonicalizer acceptance tests (skip until `sql/`, `fs/` land).
-3. Run `slurm/eval.sbatch`: server parity test, then real-server baseline numbers.
+3. ✅ Run `slurm/eval.sbatch`: server parity passed and real-server baseline matches (job 60884044).
 4. `:real` modes as soon as either canonicalizer lands. Compare against `:oracle`.
 5. Real terminal backend (container-manager) and SQL agent traces. RL runs with verl.
 
