@@ -24,6 +24,15 @@ exec > >(tee "$OUT/job.log") 2>&1
 
 cd "$REPO"
 export HF_HOME="$DIR/hf" HF_HUB_OFFLINE=1 TOKENIZERS_PARALLELISM=false
+# Compute nodes cannot flock() files on $HOME (Errno 524), and vLLM's kernel
+# compilers (Triton, TorchInductor, FlashInfer) lock files in ~/.cache. Keep
+# every compile cache on node-local /tmp.
+CACHE="/tmp/$USER-fuzzytv-$JOB"
+mkdir -p "$CACHE"
+export XDG_CACHE_HOME="$CACHE" VLLM_CACHE_ROOT="$CACHE/vllm" \
+    TRITON_CACHE_DIR="$CACHE/triton" TORCHINDUCTOR_CACHE_DIR="$CACHE/inductor" \
+    FLASHINFER_WORKSPACE_BASE="$CACHE" CUDA_CACHE_PATH="$CACHE/nv" \
+    VLLM_CONFIG_ROOT="$CACHE/vllm-config"
 DATA="$(find "$DIR/data" -name train.parquet -print -quit)"
 DB_ROOT="$(dirname "$(find "$DIR/db" -maxdepth 3 -type d -name SynSQL-2.5M -print -quit)")"
 [[ -f "$DATA" && -d "$DB_ROOT" ]] || { echo "run slurm/setup_skyrl_sql.sh first"; exit 1; }
