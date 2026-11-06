@@ -19,11 +19,14 @@ export HF_HOME="$DIR/hf"
 
 module load python/3.13-26.8.1
 cd "$REPO"
-# If `pip install vllm` fails on this Python, recreate .venv-collect with an
-# older Python module (e.g. `module load python/3.11`) and re-run.
-[[ -x .venv-collect/bin/python ]] || python3 -m venv .venv-collect
-.venv-collect/bin/pip install -q -U pip
-.venv-collect/bin/pip install -q -e upstream/tvclient -e '.[collect]' huggingface_hub
+# vLLM wheels lag new Python releases, so .venv-collect uses a standalone
+# Python 3.12 fetched by uv (installed in user site; no admin rights needed).
+python3 -m pip install -q --user uv
+UV="$(python3 -m site --user-base)/bin/uv"
+[[ -x .venv-collect/bin/python ]] || "$UV" venv -q --python 3.12 .venv-collect
+VIRTUAL_ENV="$REPO/.venv-collect" "$UV" pip install -q \
+    -e upstream/tvclient -e '.[collect,eval]' huggingface_hub
+.venv-collect/bin/python -c "import vllm, fuzzytv; print('vllm', vllm.__version__)"
 
 dl() { .venv-collect/bin/python - "$@" <<'PY'
 import sys

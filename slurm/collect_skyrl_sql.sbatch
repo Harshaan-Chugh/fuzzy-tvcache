@@ -62,7 +62,6 @@ PY
 # Replay (CPU only). `:real` modes use fuzzytv.sql if present; the runner skips
 # them otherwise. Every rollout is validated against direct execution.
 export FUZZYTV_SKYRL_SQL_DB_ROOT="$DB_ROOT"
-.venv-collect/bin/pip install -q -e '.[eval]'
 .venv-collect/bin/python -m fuzzytv.eval run "$TRACE" \
     --modes none exact canonical:real relevant_state:real \
     --read-only-hints off --latency-scale 0 --out "$OUT" --name replay --plot
