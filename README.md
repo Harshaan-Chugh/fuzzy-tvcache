@@ -70,8 +70,7 @@ All clients sharing the server must honor this reservation.
 `canonical` and `relevant_state` modes on controlled SQL and terminal workloads, validating
 every reused value. See [eval/README.md](eval/README.md).
 
-Canonicalizer acceptance tests (`tests/unit/test_canonicalizer_contract.py`) skip until
-`fuzzytv.sql.SqlCanonicalizer` / `fuzzytv.fs.FsCanonicalizer` exist.
+Canonicalizer acceptance tests are in `tests/unit/test_canonicalizer_contract.py`.
 
 Run server-free tests with `pytest -q`. Run controlled server integration tests
 against a dedicated server with:
