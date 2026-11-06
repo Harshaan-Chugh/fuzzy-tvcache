@@ -118,7 +118,7 @@ server; timings do not.
 - `modeled_tool_seconds` = count of each operation × `CostModel`. It is a projection, and only
   as good as the cost model. Real step-time numbers need the container backend.
 
-## Preliminary results (controlled workloads; confirmed on the real server; 2026-11-05)
+## Baseline results (controlled workloads; confirmed on the real server; 2026-11-05)
 
 `python -m fuzzytv.eval run eval/workloads/sql-small.json eval/workloads/fs-small.json`,
 every rollout validated, adaptive snapshots. Across three runs, hit and false-hit counts were
@@ -152,7 +152,7 @@ a result.
 | fs | on | relevant_state:oracle | 31.2% | 178 | 0 / 178 | 0.71 |
 | fs | on | relevant_state:loose | 56.8% | 383 | **92 / 383** | 0.45 |
 
-Findings so far:
+Baseline findings:
 
 1. **Hit rate is not saved work.** With upstream's default (every call stateful), fuzzy hits
    barely reduce physical executions. On fs, a 29% hit rate cuts executions by only 2%, because
@@ -163,12 +163,132 @@ Findings so far:
    select-list text as typed (`SUM(amount)` vs. `sum(amount)`). Rows were identical but values
    differed, which produced false hits until the oracle separated these spellings. The SQL
    canonicalizer must preserve select-list text (or its case) unless the column is aliased.
-   This is encoded in `test_sql_output_column_labels_are_preserved`.
+   This is encoded in `test_sql_output_column_labels_are_preserved`, and `fuzzytv.sql` now does
+   this (see the midpoint results).
 3. **Ignoring read dependencies is unsafe.** The loose level adds 12–26 points of hit rate but
    16–24% of its fuzzy hits are wrong. The spec-level oracle has 0 false hits in 770 validated
    fuzzy hits. Upper 95% bound per cell is about 2%.
 
+## Midpoint results: real canonicalizers (2026-11-06)
+
+Both teammate canonicalizers are on `main` (`fuzzytv.sql`, PR #4; `fuzzytv.fs`, PR #5). Two
+gaps in the SQL canonicalizer found by the harness are fixed on this branch: result column labels
+are preserved (the two failing contract tests now pass) and `PRAGMA table_info(t)` is a read of
+`t` instead of unknown. Before the PRAGMA fix, `relevant_state:real` got 4 fuzzy hits on
+`sql-small` (405 misses were caused by PRAGMA disabling fuzzy lookup); after, 184.
+
+Command (memory backend, adaptive snapshots, every rollout validated):
+
+```bash
+python -m fuzzytv.eval run eval/workloads/sql-small.json eval/workloads/fs-small.json \
+    --modes none exact canonical:oracle canonical:real relevant_state:oracle \
+    relevant_state:real relevant_state:loose relevant_state:real-loose \
+    --read-only-hints both --name midpoint --plot
+```
+
+| workload | hints | mode | hit rate | fuzzy hits | false / validated fuzzy (95% CI) | executions vs. `none` | analysis µs/call |
+|---|---|---|---|---|---|---|---|
+| sql | off | exact | 5.9% | 0 | — | 1.00 | — |
+| sql | off | canonical:real | 7.0% | 0 | — | 1.00 | 1068 |
+| sql | off | relevant_state:oracle | 45.2% | 207 | 0 / 207 (0–1.8%) | 0.91 | 10 |
+| sql | off | **relevant_state:real** | **40.8%** | 184 | **0 / 184** (0–2.0%) | 0.92 | 999 |
+| sql | off | relevant_state:real-loose | 54.5% | 256 | 45 / 256 (13–23%) | 0.87 | 945 |
+| sql | on | exact | 20.1% | 0 | — | 0.83 | — |
+| sql | on | canonical:real | 28.1% | 0 | — | 0.77 | 1001 |
+| sql | on | relevant_state:oracle | 47.8% | 180 | 0 / 180 (0–2.1%) | 0.55 | 9 |
+| sql | on | **relevant_state:real** | **44.8%** | 151 | **0 / 151** (0–2.5%) | 0.58 | 854 |
+| sql | on | relevant_state:real-loose | 57.1% | 231 | 46 / 231 (15–26%) | 0.46 | 918 |
+| fs | off | exact | 2.2% | 0 | — | 1.00 | — |
+| fs | off | canonical:real | 5.5% | 0 | — | 1.00 | 46 |
+| fs | off | relevant_state:oracle | 28.7% | 205 | 0 / 205 (0–1.8%) | 0.98 | 10 |
+| fs | off | **relevant_state:real** | **26.4%** | 186 | **0 / 186** (0–2.0%) | 0.99 | 46 |
+| fs | off | relevant_state:real-loose | 52.3% | 386 | 87 / 386 (19–27%) | 0.90 | 48 |
+| fs | on | exact | 11.0% | 0 | — | 0.91 | — |
+| fs | on | canonical:real | 18.2% | 0 | — | 0.85 | 45 |
+| fs | on | relevant_state:oracle | 31.2% | 178 | 0 / 178 (0–2.1%) | 0.71 | 9 |
+| fs | on | **relevant_state:real** | **28.8%** | 160 | **0 / 160** (0–2.3%) | 0.73 | 54 |
+| fs | on | relevant_state:real-loose | 54.3% | 364 | 87 / 364 (20–29%) | 0.48 | 45 |
+
+Exact-hit and executed-call mismatches are 0 in every cell. Figures:
+`docs/figures/midpoint/{hit_rates,false_hits,executions}.png`.
+
+Findings:
+
+1. **The real canonicalizers are safe on these workloads.** 0 false hits in 681 validated fuzzy
+   hits across both workloads and both hint settings (pooled 95% upper bound 0.6%).
+2. **They reach about 90% of the oracle's fuzzy hits.** SQL: 184 of 207 (hints off). fs: 186 of
+   205. The remaining SQL gap is `sqlite_master` queries (27 misses), which read every table's
+   schema and have no state key yet. The fs gap is shell control operators and brace expansion
+   (`a && b`, `{a,b}`), which the fs canonicalizer rejects by design.
+3. **The `-loose` variant of the real canonicalizers is as unsafe as the oracle's.** It drops
+   read dependencies and gets 18–24% false hits, so read-dependency tracking, not
+   canonicalization, is what makes fuzzy reuse correct.
+4. **Fuzzy matching needs read-only declarations to save work.** Without hints, a 41% hit rate
+   cuts SQL executions by 8% and a 26% hit rate cuts fs executions by 1%. With hints,
+   `relevant_state:real` cuts executions by 42% (SQL) and 27% (fs), vs. 17% and 9% for `exact`.
+5. **SQL analysis costs about 1 ms per call** (SQLGlot parse and label recovery); fs about 50 µs.
+   This is small next to container tool latency but not next to an in-process SQLite query, so
+   the report should give overhead per call next to tool time.
+
+### Coverage on real benchmark text
+
+`python -m fuzzytv.eval.coverage` runs the real canonicalizers over benchmark text without a
+model. Gold queries and reference solutions are a proxy for model-written calls.
+
+| Benchmark | Calls | Fuzzy-eligible reads | Known writes | Fall back to exact | Top reasons |
+|---|---|---|---|---|---|
+| SkyRL-SQL gold queries (653) | 653 | 96.6% | 0% | 3.4% | volatile (`'now'`, `random()`) |
+| terminal-bench easy+medium `solution.sh` lines (146 tasks) | 2041 | 15.2% | 1.4% | 83.4% | `$VAR` expansion 342, `&&`/`;`/pipes 209, control chars 112, globs 85, `curl` 61, `apt-get` 51, `if/fi` 50, `mkdir` 36 |
+
+Most SQL the benchmark uses is in the supported subset. Terminal solutions are mostly setup and
+scripting, which falls back to exact, so fuzzy gains on terminal-bench will come from the agent's
+exploratory reads (`cat`, `ls`), not from its writes. Supporting `mkdir`, `$VAR` with a known
+environment, and `&&` sequences of supported commands are the largest next steps for fs coverage.
+
 Open evaluation work:
-- run `:real` modes once `fuzzytv.sql` / `fuzzytv.fs` land;
-- connect the real terminal backend (container-manager) and real SQL traces;
+- confirm the `:real` rows on the real server (`slurm/eval.sbatch` now includes them, and the
+  parity test covers them);
+- collect SkyRL-SQL rollouts on Perlmutter GPUs, and terminal-bench rollouts on a Docker host;
 - verl RL runs (reward, step time).
+
+## Real workloads (from the TVCache paper)
+
+The TVCache paper (arXiv 2602.10986, ICML 2026) evaluates on terminal-bench, SkyRL-SQL and
+EgoSchema. Our proposal covers the first two.
+
+| | Terminal | SQL |
+|---|---|---|
+| Benchmark | terminal-bench easy (51) and medium (95) | SkyRL-SQL, 653 questions |
+| Our copy | `container-manager`: `tasks_easy_network_skip` (51), `tasks_medium_network_skip` (95) | `NovaSky-AI/SkyRL-SQL-653-data-newfmt` + `seeklhy/OmniSQL-datasets` |
+| Model | Qwen3-4B-Instruct-2507 / Qwen3-14B | Qwen2.5-Coder-7B-Instruct |
+| Rollouts per prompt | 8 | 5 |
+| Tool call | Terminus-2 JSON keystroke batches into tmux | one `<sql>` per turn, at most 6 turns |
+| State | every call treated as mutating | read-only (rolled-back transactions) |
+| Paper hit rate | 14–25% | 33% |
+
+**SkyRL-SQL collection** (`fuzzytv.eval.skyrl_sql`) reproduces SkyRL's text2sql environment and
+training recipe. Sampling, stop strings, observation text and the turn/turns-left rules are taken
+from `skyrl-gym` source. It is inference only. `--passes k` re-samples each question to approximate
+repeated epochs; the policy does not change between passes as it would during training. Run:
+`bash slurm/setup_skyrl_sql.sh` on a login node, then
+`sbatch -A <account>_g -q regular slurm/collect_skyrl_sql.sbatch`. Estimate: about 15–30 GPU-node
+minutes per pass. Not yet run on Perlmutter.
+
+Notes from SkyRL's code that matter for caching:
+- **Observation row order varies between processes.** Observations print a `frozenset` of rows,
+  so the same query in the same state can print differently in different processes. Replay
+  compares sorted rows.
+- **The turns-left reminder is not part of the result.** Each observation ends with "You have N
+  turns left". If a cached value included it, reuse at a different turn would be wrong. Our
+  replay caches only the query result.
+- **Because every call is stateless, relevant-state tracking adds nothing here.** Only
+  canonicalization can add hits beyond `exact`.
+
+**terminal-bench.** `rlhf_server/server.py` in container-manager exposes `/start`, `/execute`,
+`/get_pane_logs`, `/fork`, `/test` and `/stop`.
+- **The full pane comes back.** `/execute` returns only a status; output comes from
+  `/get_pane_logs`, which returns the **entire tmux pane**, i.e. all earlier commands. A cached
+  value is therefore not call-local unless the integration extracts per-command output. This
+  confirms the risk in `docs/architecture.md`.
+- **Docker is required.** Tasks need Docker Compose, which Perlmutter compute nodes lack (the
+  paper used its own servers). Collection needs a Linux host with Docker and is not started.

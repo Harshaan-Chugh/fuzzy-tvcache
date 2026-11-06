@@ -11,8 +11,9 @@ GREATEST/LEAST, CREATE TABLE AS) keep their original text as the canonical form.
 Assumptions (otherwise a fuzzy hit may be stale), see docs/taxonomy.md:
   - The initial database has no views, triggers or cascading foreign keys.
     Creating a view or trigger in-rollout is rejected as unknown.
-  - The tool output does not echo query text: column headers of unaliased
-    expressions, or names inside error messages.
+  - The tool output does not echo query text inside error messages. Column
+    headers are handled: SQLite labels an unaliased result expression with its
+    text as typed, so that text is kept in the canonical form (`_labels`).
   - Stored values are never the string 'now' when passed to a date function.
 """
 
@@ -20,6 +21,7 @@ from typing import Any
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.dialects import Dialect
 from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 
 from fuzzytv.interfaces import CallAnalysis, CallContext, sql_table, unknown
@@ -35,6 +37,13 @@ CATALOGS = {"sqlite_master", "sqlite_schema", "sqlite_temp_master", "sqlite_sequ
 # SQLGlot's generator rewrites these (type names, CAST AS DATE -> DATE(), GREATEST -> MAX),
 # which can change SQLite semantics. Statements containing them keep their original text.
 REWRITTEN = (exp.DataType, exp.Greatest, exp.Least)
+# Read-only PRAGMAs whose output depends only on one table's schema.
+TABLE_PRAGMAS = {"table_info", "table_xinfo", "index_list", "foreign_key_list"}
+# Tokens that end a top-level select list.
+SELECT_LIST_END = {
+    "FROM", "WHERE", "GROUP_BY", "HAVING", "WINDOW", "ORDER_BY", "LIMIT",
+    "UNION", "EXCEPT", "INTERSECT", "SEMICOLON",
+}
 
 
 class SqlCanonicalizer:
@@ -59,6 +68,8 @@ class SqlCanonicalizer:
             return unknown(f"sql analysis failed: {error}")
 
     def _analyze(self, stmt: exp.Expression, sql: str, ctx: CallContext) -> CallAnalysis:
+        if isinstance(stmt, exp.Pragma):
+            return _pragma(stmt, ctx)
         if not isinstance(stmt, (exp.Query, *DML, *DDL)):
             return unknown(f"unsupported statement: {stmt.key}")
         if isinstance(stmt, DDL) and stmt.args.get("kind") not in DDL_KINDS[type(stmt)]:
@@ -93,8 +104,136 @@ class SqlCanonicalizer:
             return CallAnalysis(None, reads_unknown=True, reason=str(error))
         # CREATE TABLE AS also keeps its text: column names come from expression spelling.
         verbatim = stmt.find(*REWRITTEN) or (isinstance(stmt, exp.Create) and stmt.expression)
-        canonical = sql.strip() if verbatim else _canonical(stmt, self.dialect)
+        labels = None if verbatim else _labels(stmt, sql, self.dialect)
+        if verbatim or labels is None:
+            canonical = sql.strip()
+        else:
+            canonical = _canonical(stmt, self.dialect) + labels
         return CallAnalysis(canonical, reads, writes, reads_unknown=reads_unknown, reason=reason)
+
+
+def _pragma(stmt: exp.Pragma, ctx: CallContext) -> CallAnalysis:
+    """`PRAGMA table_info(t)` and similar: a read of table t's schema."""
+    node = stmt.this
+    if not isinstance(node, exp.EQ) or not isinstance(node.expression, exp.Column):
+        return unknown("unsupported statement: pragma")
+    name, schema = node.this, None
+    if isinstance(name, exp.Dot):
+        name, schema = name.expression, name.this
+    if not isinstance(name, exp.Var) or name.name.lower() not in TABLE_PRAGMAS:
+        return unknown("unsupported statement: pragma")
+    column = node.expression
+    if column.table or not isinstance(column.this, exp.Identifier):
+        return unknown("unsupported pragma argument")
+    if not ctx.database:
+        return unknown("unknown database")
+    if schema is not None and schema.name.lower() not in {"main", ctx.database.lower()}:
+        return unknown(f"qualified pragma: {schema.name}")
+    table = column.name.lower()
+    if table in CATALOGS:
+        return CallAnalysis(None, reads_unknown=True, reason=f"system table: {table}")
+    canonical = f"PRAGMA {name.name.lower()}({table})"
+    return CallAnalysis(canonical, frozenset({sql_table(ctx.database, table)}), frozenset())
+
+
+def _labels(stmt: exp.Expression, sql: str, dialect: str) -> str | None:
+    """Suffix recording the as-typed text of unaliased output expressions.
+
+    SQLite names such a result column after its source text (`sum( a )`,
+    `COUNT(*)`), so two spellings return different values. CTE and FROM
+    subquery labels count too when they reach the output through `*`.
+    Returns "" when no column needs it and None when the text cannot be
+    recovered reliably (the caller then keeps the whole statement verbatim).
+    """
+    if isinstance(stmt, (*DML, *DDL)):
+        return None if stmt.find(exp.Returning) else ""
+    select = stmt
+    while isinstance(select, exp.SetOperation):
+        select = select.this
+    if not isinstance(select, exp.Select):
+        return None
+    targets = [select]
+    if select.find(exp.Star):
+        targets += [s for s in stmt.find_all(exp.Select) if s is not select and _is_source(s, stmt)]
+    targets = [t for t in targets if any(map(_needs_label, t.expressions))]
+    if not targets:
+        return ""
+    lists = _select_lists(sql, dialect)
+    if lists is None:
+        return None
+    labels = []
+    for target in targets:
+        wanted = [p.sql(dialect, comments=False) for p in target.expressions]
+        found = {tuple(items) for items in lists if _parses_as(items, wanted, dialect)}
+        if len(found) != 1:
+            return None
+        (items,) = found
+        labels += [i for i, p in zip(items, target.expressions, strict=True) if _needs_label(p)]
+    return " /* labels: " + " | ".join(labels).replace("*/", "* /") + " */"
+
+
+def _parses_as(items: list[str], wanted: list[str], dialect: str) -> bool:
+    if len(items) != len(wanted):
+        return False
+    try:
+        parsed = [sqlglot.parse_one(i, read=dialect).sql(dialect, comments=False) for i in items]
+    except Exception:  # noqa: BLE001 - any failure means no match
+        return False
+    return parsed == wanted
+
+
+def _needs_label(projection: exp.Expression) -> bool:
+    return not isinstance(projection, (exp.Alias, exp.Column, exp.Star))
+
+
+def _is_source(select: exp.Select, root: exp.Expression) -> bool:
+    """True if `select` feeds rows to an outer query (CTE body or FROM subquery)."""
+    node = select.parent
+    while node is not None and node is not root:
+        if isinstance(node, exp.CTE):
+            return True
+        if isinstance(node, exp.Subquery) and isinstance(node.parent, (exp.From, exp.Join)):
+            return True
+        node = node.parent
+    return False
+
+
+def _select_lists(sql: str, dialect: str) -> list[list[str]] | None:
+    """Every select list in `sql`, each item as SQLite labels it: from the
+    item's first token up to the next comma or clause keyword (or the closing
+    parenthesis of a subquery), trailing whitespace removed; comments kept."""
+    try:
+        tokens = Dialect.get_or_raise(dialect).tokenize(sql)
+    except Exception:  # noqa: BLE001
+        return None
+    lists = []
+    for index, token in enumerate(tokens):
+        if token.token_type.name != "SELECT":
+            continue
+        depth, items, first = 0, [], None
+        end = len(sql)
+        for token in tokens[index + 1 :]:
+            kind = token.token_type.name
+            if depth == 0 and (kind in SELECT_LIST_END or kind in {"COMMA", "R_PAREN"}):
+                if first is None:
+                    break
+                items.append(sql[first.start : token.start].rstrip())
+                first = None
+                if kind == "COMMA":
+                    continue
+                end = -1
+                break
+            if first is None and depth == 0 and not items and kind in {"DISTINCT", "ALL"}:
+                continue
+            if first is None:
+                first = token
+            depth += kind == "L_PAREN"
+            depth -= kind == "R_PAREN"
+        if end != -1 and first is not None:
+            items.append(sql[first.start :].rstrip())
+        if items:
+            lists.append(items)
+    return lists
 
 
 def _tables(node: exp.Expression) -> list[exp.Table]:

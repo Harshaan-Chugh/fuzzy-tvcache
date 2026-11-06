@@ -35,6 +35,8 @@ class OracleCanonicalizer:
         for task in workload.tasks:
             for rollout in task.rollouts:
                 for step in rollout:
+                    if step.oracle is None:
+                        raise RuntimeError(f"{workload.name} has no oracle analyses")
                     key = _call_key(step.call, step.ctx)
                     analysis = analysis_from_json(step.oracle)
                     if self.table.setdefault(key, analysis) != analysis:

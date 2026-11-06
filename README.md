@@ -14,9 +14,11 @@ adds a fuzzy lookup layer that does two things:
 
 It falls back to exact TVCache whenever safety can't be established.
 
-Status: relevant-state tracking and an exact-first Python integration layer.
-Controlled filesystem/SQLite validation is provided. Production SQL and terminal
-workload adapters remain to be connected and verified.
+Status (midpoint, 2026-11-06): relevant-state tracking, an exact-first integration layer, SQL
+and filesystem canonicalizers, and an evaluation harness that validates every reused value. On
+controlled workloads the real canonicalizers reach about 90% of the spec-level oracle's fuzzy
+hits with 0 false hits in 681 validated fuzzy hits. Real-workload rollouts (SkyRL-SQL,
+terminal-bench) and RL runs are next.
 See [docs/state-tracking.md](docs/state-tracking.md) and
 [docs/evaluation.md](docs/evaluation.md).
 

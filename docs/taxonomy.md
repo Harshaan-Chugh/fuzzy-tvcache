@@ -5,7 +5,8 @@
 | SQL read | `SELECT` on known tables | Yes, if parse succeeds | Depends on the referenced tables and views (and their underlying tables), plus the schema. |
 | SQL write | `INSERT/UPDATE/DELETE` on known tables | No (execute) | Advances state of the written tables. Reads in `WHERE`/subqueries count too. |
 | SQL DDL | `CREATE/ALTER/DROP` | No | Schema change. Treat as a write to the schema, possibly global. |
-| SQL txn/session | `BEGIN`, `PRAGMA`, `ATTACH`, `SET` | No | Unknown. Forces fallback. |
+| SQL schema read | `PRAGMA table_info(t)` | Yes | Reads `t` (its schema changes only through DDL on `t`). |
+| SQL txn/session | `BEGIN`, other `PRAGMA`s, `ATTACH`, `SET` | No | Unknown. Forces fallback. |
 | FS read | `cat <files>`, `ls [path]` | Yes, without flags | Depends on cwd-resolved paths. `ls` depends on the directory entry set, and `-l` adds metadata. |
 | FS write | `echo > f`, `echo >> f` | No (execute) | Known writes. `rm`, `mv`, `touch`, `mkdir` are currently unknown (see below). |
 | Arbitrary shell | pipes, scripts, `python x.py`, globs | No | Unknown reads and writes. Poisons state. |
@@ -28,17 +29,24 @@ Initial supported set: SQL `SELECT` (single statement, no functions with side ef
 - Not normalized, since these can change output or row order: column names and aliases,
   literals, predicate order, `ORDER BY`, and `main.` qualifiers (`CREATE INDEX … ON main.t`
   is an error in SQLite).
+- Result column labels: SQLite names an unaliased result expression after its text as typed,
+  from its first token up to the next comma or clause keyword (`sum( a )`, `COUNT(*) /* c */`).
+  The canonical form appends that text (`… /* labels: COUNT(*) */`) for every unaliased
+  non-column output, including CTE and `FROM` subquery outputs that reach the result through
+  `*`. If the text cannot be matched to the AST, the statement keeps its original text.
 - Supported: one `SELECT`/set-op/`WITH` query, `INSERT/UPDATE/DELETE`, and `CREATE TABLE/INDEX`,
   `DROP TABLE`, `ALTER TABLE`. Anything else, including views, triggers, temp or virtual tables,
-  `SELECT INTO`, sequences, transactions, `PRAGMA`, nested writes and multi-statement input, is
-  `unknown`. Tables qualified with any database other than the default (`main`) are unknown too.
+  `SELECT INTO`, sequences, transactions, nested writes and multi-statement input, is
+  `unknown`. `PRAGMA table_info`, `table_xinfo`, `index_list` and `foreign_key_list` on a
+  default-database table are reads of that table, canonicalized as `PRAGMA table_info(t)`;
+  every other `PRAGMA` is unknown. Tables qualified with any database other than the default (`main`) are unknown too.
 - `CREATE INDEX` writes its table because an index can change unordered row order. Inside a
   `WITH` clause, names count as real tables, because Postgres resolves a CTE's own name there.
 - Volatile calls (`NOW()`, `RANDOM()`, `CURRENT_*`, `'now'`, zero-argument `date()` etc.) and
   reads of system catalogs or an unknown database set `reads_unknown`.
 - Assumptions: the initial database has no views, triggers or cascading foreign keys. The tool
-  output doesn't echo query text: unaliased expression headers and names in error messages are
-  both exceptions. Stored values passed to date functions are never `'now'`.
+  output doesn't echo query text in error messages (headers are handled above). Stored values
+  passed to date functions are never `'now'`.
 - Tests: `tests/unit/test_sql_canonicalizer.py` covers worked examples and edge cases.
   `tests/unit/test_sql_properties.py` runs randomized differential checks against SQLite, plus a
   117-statement surface corpus. Raise `FUZZYTV_SQL_FUZZ` for longer runs.

@@ -52,6 +52,14 @@ def run(conn: sqlite3.Connection, sql: str) -> str:
         return f"ERR {type(error).__name__}"
 
 
+def labels(conn: sqlite3.Connection, sql: str) -> tuple[str, ...] | None:
+    """Result column names, which are part of the tool output."""
+    try:
+        return tuple(d[0] for d in conn.execute(sql).description or ())
+    except sqlite3.Error:
+        return None
+
+
 def snapshot(conn: sqlite3.Connection) -> dict[str, str]:
     """Per table: columns, indexes and rows (schema compared structurally, not as text)."""
     def rows(sql: str) -> list:
@@ -212,14 +220,25 @@ def test_equal_canonicals_never_disagree():
         for group in merged:
             outputs = {run(clone(conn), sql) for sql in group}
             assert len(outputs) == 1, group
+            assert len({labels(clone(conn), sql) for sql in group}) == 1, group
 
 
 def test_surface_variants_collapse():
-    """Same query, different spelling: canonicals must match (hit-rate, not safety)."""
-    misses = 0
+    """Same query, different spelling: canonicals must match (hit-rate, not safety).
+
+    Spellings that SQLite labels differently (`COUNT(*)` vs `count(*)`) return
+    different column headers, so they must stay apart and are not counted.
+    """
+    misses = compared = 0
+    conn = make_db(0)
     for seed in range(N):
         a, b = (gen_select(random.Random(seed), Style(random.Random(seed * 2 + k))) for k in (0, 1))
-        misses += CANON.analyze({"sql": a}, CTX).canonical != CANON.analyze({"sql": b}, CTX).canonical
+        if labels(clone(conn), a) != labels(clone(conn), b):
+            continue
+        compared += 1
+        canonicals = {CANON.analyze({"sql": q}, CTX).canonical for q in (a, b)}
+        misses += len(canonicals) != 1
+    assert compared > N // 2
     assert misses == 0
 
 

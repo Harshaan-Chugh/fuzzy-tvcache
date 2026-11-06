@@ -16,8 +16,9 @@ python -m fuzzytv.eval run eval/workloads/sql-small.json eval/workloads/fs-small
     --name baseline --plot
 ```
 
-This runs the five default modes (`none`, `exact`, `canonical:oracle`,
-`relevant_state:oracle`, `relevant_state:loose`), each with read-only hints off and on. It
+This runs the seven default modes (`none`, `exact`, `canonical:oracle`, `canonical:real`,
+`relevant_state:oracle`, `relevant_state:real`, `relevant_state:loose`), each with read-only
+hints off and on. It
 validates every rollout against an independent reference sandbox. It writes:
 
 | File | Contents |
@@ -48,9 +49,9 @@ python -m fuzzytv.eval run ... --sample-rate 0.1 --snapshot adaptive \
 python -m fuzzytv.eval plot results/eval/baseline
 ```
 
-`:real` modes use `fuzzytv.sql.SqlCanonicalizer` and `fuzzytv.fs.FsCanonicalizer`. They are
-skipped with a message until those exist. When only one exists, calls for the other tool
-analyze as unknown.
+`:real` modes use `fuzzytv.sql.SqlCanonicalizer` and `fuzzytv.fs.FsCanonicalizer` (both on
+`main`). If neither module can be imported, they are skipped with a message; when only one
+exists, calls for the other tool analyze as unknown.
 
 ## On Perlmutter
 
@@ -61,3 +62,21 @@ sbatch -A <account> -q <qos> -C cpu slurm/eval.sbatch
 The job builds the pinned server and runs the backend-parity integration test (memory and
 server must make identical decisions). It then runs every mode against the real server and
 plots the results. Logs go to `$SCRATCH/fuzzy-tvcache/eval-jobs/<jobid>`.
+
+## Real SkyRL-SQL rollouts (GPU)
+
+```bash
+bash slurm/setup_skyrl_sql.sh                            # login node, once (~40 GB download)
+sbatch -A <account>_g -q regular slurm/collect_skyrl_sql.sbatch   # PASSES=3 SAMPLES=5 by default
+```
+
+Output in `$SCRATCH/fuzzy-tvcache/skyrl-sql/<jobid>/`: per-shard traces and logs, the merged
+`skyrl-sql.json`, `rollouts.jsonl` (full text, reward, stop reason), and `replay/` (modes
+`none`, `exact`, `canonical:real`, `relevant_state:real`, every rollout validated). Replay an
+existing trace anywhere the databases are available:
+
+```bash
+FUZZYTV_SKYRL_SQL_DB_ROOT=<dir with SynSQL-2.5M/> python -m fuzzytv.eval run skyrl-sql.json \
+    --modes exact canonical:real --read-only-hints off
+```
+

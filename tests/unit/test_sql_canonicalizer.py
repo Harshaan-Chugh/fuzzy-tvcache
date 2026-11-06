@@ -89,7 +89,9 @@ def test_volatile_reads_unknown(sql):
 @pytest.mark.parametrize("sql,reason", [
     ("SELEC name FRM users", "sql parse failed"),
     ("SELECT 1; SELECT 2", "expected exactly one sql statement"),
-    ("PRAGMA table_info(users)", "unsupported statement"),
+    ("PRAGMA foreign_keys = ON", "unsupported statement"),
+    ("PRAGMA index_info(i_users)", "unsupported statement"),
+    ("PRAGMA other.table_info(users)", "qualified pragma"),
     ("BEGIN", "unsupported statement"),
     ("CREATE VIEW v AS SELECT * FROM users", "unsupported ddl"),
     ("CREATE TEMP TABLE x(a INT)", "temporary"),
@@ -158,7 +160,7 @@ def test_different_calls_keep_distinct_canonicals(left, right):
     "SELECT u.id FROM users u WHERE EXISTS (SELECT 1 FROM orders u WHERE u.uid = 1)",
     "SELECT u.id FROM users u JOIN (SELECT 1 AS id) AS u ON u.id = 1",
     "SELECT _t0 FROM users u",
-    "WITH u AS (SELECT 1) SELECT * FROM users u",
+    "WITH u AS (SELECT 1 AS x) SELECT * FROM users u",
 ])
 def test_ambiguous_aliases_are_left_alone(sql):
     assert "users AS u" in analyze(sql).canonical
@@ -184,3 +186,39 @@ async def test_executor_reuses_select_across_unrelated_update(
         "fuzzy", json.dumps([["hello"]]))
     assert await replay([hello, relevant, sql("sql", "select value from items")]) == (
         "execute", json.dumps([["world"]]))
+
+
+@pytest.mark.parametrize("spelling", [
+    "PRAGMA table_info(users)", "pragma TABLE_INFO( users )", 'PRAGMA table_info("USERS")',
+    "PRAGMA main.table_info(users)",
+])
+def test_table_info_pragma_reads_one_table(spelling):
+    analysis = SqlCanonicalizer().analyze({"sql": spelling}, CallContext(database="main"))
+    assert analysis.canonical == "PRAGMA table_info(users)"
+    assert analysis.reads == {"sql:table:main.users"} and not analysis.writes
+    assert not analysis.reads_unknown and not analysis.writes_unknown
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT a+1 /*x*/ , a+2  /* y */FROM t",
+    "SELECT a+1 -- z\n FROM t",
+    "SELECT DISTINCT sum( a ) FROM t",
+    "SELECT (a+1), count(*) FROM t UNION SELECT 1, 2",
+    "SELECT 1 + 1",
+    "WITH c AS (SELECT a FROM t) SELECT COUNT(*) FROM c",
+])
+def test_label_suffix_matches_sqlite_column_names(sql):
+    from fuzzytv.sql import _select_lists
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE t(a)")
+    expected = [d[0] for d in conn.execute(sql).description]
+    assert expected in _select_lists(sql, "sqlite")
+
+
+def test_cte_labels_reaching_output_keep_statement_verbatim():
+    canon, ctx = SqlCanonicalizer(), CallContext(database="main")
+    a = canon.analyze({"sql": "WITH c AS (SELECT Count(*) FROM t) SELECT * FROM c"}, ctx)
+    b = canon.analyze({"sql": "WITH c AS (SELECT count(*) FROM t) SELECT * FROM c"}, ctx)
+    assert a.canonical != b.canonical
+    assert a.reads == b.reads == {"sql:table:main.t"}
