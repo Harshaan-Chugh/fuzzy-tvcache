@@ -168,7 +168,62 @@ Findings so far:
    16–24% of its fuzzy hits are wrong. The spec-level oracle has 0 false hits in 770 validated
    fuzzy hits. Upper 95% bound per cell is about 2%.
 
+### First real canonicalizer: `fuzzytv.sql` (PR #4), 2026-11-05
+
+Measured on `sql-small` with hints off (`--modes canonical:real relevant_state:real`):
+
+- **Column labels.** It passes 33 of 35 SQL acceptance tests. Both failures are column-label cases
+  (`SUM(x)`/`sum(x)`, `COUNT(*)`/`count(*)`), and in the harness `canonical:real` returned 3
+  wrong values for exactly that reason.
+- **PRAGMA disables fuzzy matching.** `relevant_state:real` got 4 fuzzy hits vs. the oracle's 207.
+  `PRAGMA table_info(t)` analyzes as unknown (it may read and write anything), which disables fuzzy
+  matching for the rest of the rollout (405 of the misses). `PRAGMA table_info(t)` is a pure read
+  of `sql:table:<db>.t`. `sqlite_master` queries read every table's schema and may need a schema
+  key in the interface.
+
 Open evaluation work:
-- run `:real` modes once `fuzzytv.sql` / `fuzzytv.fs` land;
-- connect the real terminal backend (container-manager) and real SQL traces;
+- `:real` modes for `fuzzytv.fs` once it lands;
+- collect SkyRL-SQL rollouts (below) and terminal-bench rollouts;
 - verl RL runs (reward, step time).
+
+## Real workloads (from the TVCache paper)
+
+The TVCache paper (arXiv 2602.10986, ICML 2026) evaluates on terminal-bench, SkyRL-SQL and
+EgoSchema. Our proposal covers the first two.
+
+| | Terminal | SQL |
+|---|---|---|
+| Benchmark | terminal-bench easy (51) and medium (95) | SkyRL-SQL, 653 questions |
+| Our copy | `container-manager`: `tasks_easy_network_skip` (51), `tasks_medium_network_skip` (95) | `NovaSky-AI/SkyRL-SQL-653-data-newfmt` + `seeklhy/OmniSQL-datasets` |
+| Model | Qwen3-4B-Instruct-2507 / Qwen3-14B | Qwen2.5-Coder-7B-Instruct |
+| Rollouts per prompt | 8 | 5 |
+| Tool call | Terminus-2 JSON keystroke batches into tmux | one `<sql>` per turn, at most 6 turns |
+| State | every call treated as mutating | read-only (rolled-back transactions) |
+| Paper hit rate | 14–25% | 33% |
+
+**SkyRL-SQL collection** (`fuzzytv.eval.skyrl_sql`) reproduces SkyRL's text2sql environment and
+training recipe. Sampling, stop strings, observation text and the turn/turns-left rules are taken
+from `skyrl-gym` source. It is inference only. `--passes k` re-samples each question to approximate
+repeated epochs; the policy does not change between passes as it would during training. Run:
+`bash slurm/setup_skyrl_sql.sh` on a login node, then
+`sbatch -A <account>_g -q regular slurm/collect_skyrl_sql.sbatch`. Estimate: about 15–30 GPU-node
+minutes per pass. Not yet run on Perlmutter.
+
+Notes from SkyRL's code that matter for caching:
+- **Observation row order varies between processes.** Observations print a `frozenset` of rows,
+  so the same query in the same state can print differently in different processes. Replay
+  compares sorted rows.
+- **The turns-left reminder is not part of the result.** Each observation ends with "You have N
+  turns left". If a cached value included it, reuse at a different turn would be wrong. Our
+  replay caches only the query result.
+- **Because every call is stateless, relevant-state tracking adds nothing here.** Only
+  canonicalization can add hits beyond `exact`.
+
+**terminal-bench.** `rlhf_server/server.py` in container-manager exposes `/start`, `/execute`,
+`/get_pane_logs`, `/fork`, `/test` and `/stop`.
+- **The full pane comes back.** `/execute` returns only a status; output comes from
+  `/get_pane_logs`, which returns the **entire tmux pane**, i.e. all earlier commands. A cached
+  value is therefore not call-local unless the integration extracts per-command output. This
+  confirms the risk in `docs/architecture.md`.
+- **Docker is required.** Tasks need Docker Compose, which Perlmutter compute nodes lack (the
+  paper used its own servers). Collection needs a Linux host with Docker and is not started.

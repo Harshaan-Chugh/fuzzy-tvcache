@@ -61,3 +61,21 @@ sbatch -A <account> -q <qos> -C cpu slurm/eval.sbatch
 The job builds the pinned server and runs the backend-parity integration test (memory and
 server must make identical decisions). It then runs every mode against the real server and
 plots the results. Logs go to `$SCRATCH/fuzzy-tvcache/eval-jobs/<jobid>`.
+
+## Real SkyRL-SQL rollouts (GPU)
+
+```bash
+bash slurm/setup_skyrl_sql.sh                            # login node, once (~40 GB download)
+sbatch -A <account>_g -q regular slurm/collect_skyrl_sql.sbatch   # PASSES=3 SAMPLES=5 by default
+```
+
+Output in `$SCRATCH/fuzzy-tvcache/skyrl-sql/<jobid>/`: per-shard traces and logs, the merged
+`skyrl-sql.json`, `rollouts.jsonl` (full text, reward, stop reason), and `replay/` (modes
+`none`, `exact`, `canonical:real`, `relevant_state:real`, every rollout validated). Replay an
+existing trace anywhere the databases are available:
+
+```bash
+FUZZYTV_SKYRL_SQL_DB_ROOT=<dir with SynSQL-2.5M/> python -m fuzzytv.eval run skyrl-sql.json \
+    --modes exact canonical:real --read-only-hints off
+```
+
