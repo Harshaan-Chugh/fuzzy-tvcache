@@ -169,7 +169,7 @@ Baseline findings:
    16–24% of its fuzzy hits are wrong. The spec-level oracle has 0 false hits in 770 validated
    fuzzy hits. Upper 95% bound per cell is about 2%.
 
-## Midpoint results: real canonicalizers (2026-11-06)
+## Midpoint results: real canonicalizers (2026-11-06; confirmed on the real server)
 
 Both teammate canonicalizers are on `main` (`fuzzytv.sql`, PR #4; `fuzzytv.fs`, PR #5). Two
 gaps in the SQL canonicalizer found by the harness are fixed on this branch: result column labels
@@ -209,7 +209,11 @@ python -m fuzzytv.eval run eval/workloads/sql-small.json eval/workloads/fs-small
 | fs | on | **relevant_state:real** | **28.8%** | 160 | **0 / 160** (0–2.3%) | 0.73 | 54 |
 | fs | on | relevant_state:real-loose | 54.3% | 364 | 87 / 364 (20–29%) | 0.48 | 45 |
 
-Exact-hit and executed-call mismatches are 0 in every cell. Figures:
+Exact-hit and executed-call mismatches are 0 in every cell. The same run against the real
+TVCache server on a Perlmutter CPU node (`slurm/eval.sbatch`, job 60891246, which also passed
+the memory/server parity test including the `:real` modes) reproduced every hit, fuzzy-hit and
+false-hit count exactly; physical executions differed by at most 4 (adaptive snapshot timing).
+Figures:
 `docs/figures/midpoint/{hit_rates,false_hits,executions}.png`.
 
 Findings:
@@ -246,8 +250,6 @@ exploratory reads (`cat`, `ls`), not from its writes. Supporting `mkdir`, `$VAR`
 environment, and `&&` sequences of supported commands are the largest next steps for fs coverage.
 
 Open evaluation work:
-- confirm the `:real` rows on the real server (`slurm/eval.sbatch` now includes them, and the
-  parity test covers them);
 - collect SkyRL-SQL rollouts on Perlmutter GPUs, and terminal-bench rollouts on a Docker host;
 - verl RL runs (reward, step time).
 

@@ -47,8 +47,9 @@ replays the rollout's own history. A **false hit** is any reused value that diff
 
 Controlled workloads (`eval/workloads/sql-small.json`, `fs-small.json`; 1,297 tool calls) are
 generated from seeds with spelling variants, irrelevant writes, relevant writes and unknown
-commands. The in-memory backend made identical decisions to the real TVCache server in all 24
-parity configurations on Perlmutter (job 60884044).
+commands. The in-memory backend made identical decisions to the real TVCache server in every
+parity configuration on Perlmutter (jobs 60884044 and 60891246), and the full results below were
+reproduced on the real server (job 60891246).
 
 ## Results so far
 
@@ -93,7 +94,6 @@ We use the TVCache paper's workloads:
 
 | Item | Plan | Risk |
 |---|---|---|
-| Real-server confirmation of `:real` rows | Re-run `slurm/eval.sbatch` (parity test now covers `:real`) | Low |
 | SkyRL-SQL rollouts | `slurm/collect_skyrl_sql.sbatch`, about 1–2 GPU-node hours for 3 passes; replay through all modes | vLLM install on Perlmutter's Python untested |
 | terminal-bench rollouts | Needs Docker Compose, which Perlmutter compute nodes lack. Need a Linux Docker host (advisor's servers or a cloud VM) | Blocking; the server also returns the whole tmux pane, so results are not call-local without per-command output extraction |
 | fs coverage | `mkdir`, `&&` sequences of supported commands, `$VAR` with a known environment | Medium |
