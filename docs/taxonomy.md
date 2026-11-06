@@ -14,3 +14,31 @@
 
 Initial supported set: SQL `SELECT` (single statement, no functions with side effects), and
 `cat`/`ls` with a small flag allowlist. Everything else is exact-only.
+
+## SQL canonicalizer (`fuzzytv.sql.SqlCanonicalizer`)
+
+- Canonical form is the SQLGlot AST re-rendered in the workload dialect (default `sqlite`).
+  This removes whitespace, keyword-case, comment and operator-spelling (`<>`/`!=`) differences.
+  Table names follow the dialect's case rules, and table aliases are renamed positionally
+  (`_t0`, `_t1`, …) only when no alias is shadowed or reused.
+- SQLGlot *rewrites* some constructs instead of reformatting them. Examples: `CAST(x AS BOOLEAN)`
+  becomes `INTEGER`, `CAST(x AS DATE)` becomes `DATE(x)`, `INT` becomes `INTEGER PRIMARY KEY`,
+  and `GREATEST` becomes `MAX`. Statements containing types, `GREATEST`/`LEAST`, or
+  `CREATE TABLE … AS` (whose column names come from expression text) keep their original text.
+- Not normalized, since these can change output or row order: column names and aliases,
+  literals, predicate order, `ORDER BY`, and `main.` qualifiers (`CREATE INDEX … ON main.t`
+  is an error in SQLite).
+- Supported: one `SELECT`/set-op/`WITH` query, `INSERT/UPDATE/DELETE`, and `CREATE TABLE/INDEX`,
+  `DROP TABLE`, `ALTER TABLE`. Anything else, including views, triggers, temp or virtual tables,
+  `SELECT INTO`, sequences, transactions, `PRAGMA`, nested writes and multi-statement input, is
+  `unknown`. Tables qualified with any database other than the default (`main`) are unknown too.
+- `CREATE INDEX` writes its table because an index can change unordered row order. Inside a
+  `WITH` clause, names count as real tables, because Postgres resolves a CTE's own name there.
+- Volatile calls (`NOW()`, `RANDOM()`, `CURRENT_*`, `'now'`, zero-argument `date()` etc.) and
+  reads of system catalogs or an unknown database set `reads_unknown`.
+- Assumptions: the initial database has no views, triggers or cascading foreign keys. The tool
+  output doesn't echo query text: unaliased expression headers and names in error messages are
+  both exceptions. Stored values passed to date functions are never `'now'`.
+- Tests: `tests/unit/test_sql_canonicalizer.py` covers worked examples and edge cases.
+  `tests/unit/test_sql_properties.py` runs randomized differential checks against SQLite, plus a
+  117-statement surface corpus. Raise `FUZZYTV_SQL_FUZZ` for longer runs.
