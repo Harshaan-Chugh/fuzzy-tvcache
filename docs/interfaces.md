@@ -51,7 +51,12 @@ Build these with the helpers `sql_table`, `fs_file`, `fs_dir` and `CWD`, never b
 
 ## Worked examples (cwd = `/app`, database = `main`)
 
-These are the target outputs for the canonicalizers. Turn them into tests in `tests/unit/`.
+These are the target outputs for the canonicalizers. They are encoded, with more equivalent and
+non-equivalent cases, in `tests/unit/test_canonicalizer_contract.py`. Those tests expect
+`fuzzytv.sql.SqlCanonicalizer` and `fuzzytv.fs.FsCanonicalizer` (no-argument constructors) and
+skip until they exist. One addition came from the evaluation harness: SQLite labels unaliased
+result columns with the select-list text as typed, so `SUM(x)` and `sum(x)` are **not**
+equivalent when output includes headers (see `docs/evaluation.md`).
 
 | Call | canonical | reads | writes | flags / reason |
 |---|---|---|---|---|
@@ -84,6 +89,10 @@ These are the target outputs for the canonicalizers. Turn them into tests in `te
 ## Open questions
 
 - Who dispatches a call to the SQL or fs canonicalizer? This depends on the `to_dict()` schema.
+  Proposal used by the eval harness and acceptance tests (`fuzzytv/eval/calls.py`):
+  `{"tool": "sql", "query": ...}` and `{"tool": "bash", "command": ...}`, dispatched on `tool`
+  (`fuzzytv.eval.canonicalizers.RealCanonicalizer`).
 - How does the state tracker learn the new cwd after `cd`? Probably from `canonical`, or we add a
   field later.
-- Does Rohan's harness consume the same analysis objects to explain false hits?
+- Does Rohan's harness consume the same analysis objects to explain false hits? Yes: per-call
+  records carry the executor's decision reason, and each trace stores the oracle analysis.

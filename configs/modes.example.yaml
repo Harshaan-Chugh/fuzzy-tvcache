@@ -1,4 +1,5 @@
-# Cache mode selection (documentation only; not yet consumed by code).
+# Cache mode selection (documentation only). The evaluation CLI takes the same
+# choices as flags: python -m fuzzytv.eval run --modes ... --sample-rate ...
 # Copy to configs/local.yaml (gitignored) to customize.
 mode: exact            # one of: none | exact | canonical | relevant_state
 tvcache:

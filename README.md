@@ -25,7 +25,7 @@ See [docs/state-tracking.md](docs/state-tracking.md) and
 | Harshaan Chugh | Shared interfaces, state tracking, cache integration | `src/fuzzytv/interfaces.py`, `src/fuzzytv/state/` |
 | Kevin Rodriguez | SQL canonicalization (SQLGlot) | `src/fuzzytv/sql/` |
 | Etienne Sasenarine | Filesystem canonicalization (`cat`, `ls`) | `src/fuzzytv/fs/` |
-| Rohan Shankar | Baselines, validation, evaluation | `eval/`, `tests/integration/` |
+| Rohan Shankar | Baselines, validation, evaluation | `src/fuzzytv/eval/`, `eval/`, `tests/integration/` |
 
 ## Layout
 
@@ -63,6 +63,15 @@ Canonicalized strings are used only as keys; original calls execute unchanged.
 
 The `__fuzzytv_relevant_v1__:` task prefix is reserved for secondary entries.
 All clients sharing the server must honor this reservation.
+
+## Evaluation
+
+`python -m fuzzytv.eval run eval/workloads/*.json --plot` compares `none`, `exact`,
+`canonical` and `relevant_state` modes on controlled SQL and terminal workloads, validating
+every reused value. See [eval/README.md](eval/README.md).
+
+Canonicalizer acceptance tests (`tests/unit/test_canonicalizer_contract.py`) skip until
+`fuzzytv.sql.SqlCanonicalizer` / `fuzzytv.fs.FsCanonicalizer` exist.
 
 Run server-free tests with `pytest -q`. Run controlled server integration tests
 against a dedicated server with:
