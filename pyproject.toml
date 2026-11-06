@@ -10,6 +10,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 eval = ["matplotlib>=3.8"]
+# Rollout collection on GPU nodes (python -m fuzzytv.eval.skyrl_sql).
+collect = ["vllm>=0.6", "pandas>=2", "pyarrow>=14"]
 
 [build-system]
 requires = ["setuptools>=61"]
