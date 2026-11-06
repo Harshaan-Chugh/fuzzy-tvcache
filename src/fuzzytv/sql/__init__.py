@@ -37,6 +37,8 @@ CATALOGS = {"sqlite_master", "sqlite_schema", "sqlite_temp_master", "sqlite_sequ
 # SQLGlot's generator rewrites these (type names, CAST AS DATE -> DATE(), GREATEST -> MAX),
 # which can change SQLite semantics. Statements containing them keep their original text.
 REWRITTEN = (exp.DataType, exp.Greatest, exp.Least)
+# Read-only PRAGMAs whose output depends only on one table's schema.
+TABLE_PRAGMAS = {"table_info", "table_xinfo", "index_list", "foreign_key_list"}
 # Tokens that end a top-level select list.
 SELECT_LIST_END = {
     "FROM", "WHERE", "GROUP_BY", "HAVING", "WINDOW", "ORDER_BY", "LIMIT",
@@ -66,6 +68,8 @@ class SqlCanonicalizer:
             return unknown(f"sql analysis failed: {error}")
 
     def _analyze(self, stmt: exp.Expression, sql: str, ctx: CallContext) -> CallAnalysis:
+        if isinstance(stmt, exp.Pragma):
+            return _pragma(stmt, ctx)
         if not isinstance(stmt, (exp.Query, *DML, *DDL)):
             return unknown(f"unsupported statement: {stmt.key}")
         if isinstance(stmt, DDL) and stmt.args.get("kind") not in DDL_KINDS[type(stmt)]:
@@ -106,6 +110,30 @@ class SqlCanonicalizer:
         else:
             canonical = _canonical(stmt, self.dialect) + labels
         return CallAnalysis(canonical, reads, writes, reads_unknown=reads_unknown, reason=reason)
+
+
+def _pragma(stmt: exp.Pragma, ctx: CallContext) -> CallAnalysis:
+    """`PRAGMA table_info(t)` and similar: a read of table t's schema."""
+    node = stmt.this
+    if not isinstance(node, exp.EQ) or not isinstance(node.expression, exp.Column):
+        return unknown("unsupported statement: pragma")
+    name, schema = node.this, None
+    if isinstance(name, exp.Dot):
+        name, schema = name.expression, name.this
+    if not isinstance(name, exp.Var) or name.name.lower() not in TABLE_PRAGMAS:
+        return unknown("unsupported statement: pragma")
+    column = node.expression
+    if column.table or not isinstance(column.this, exp.Identifier):
+        return unknown("unsupported pragma argument")
+    if not ctx.database:
+        return unknown("unknown database")
+    if schema is not None and schema.name.lower() not in {"main", ctx.database.lower()}:
+        return unknown(f"qualified pragma: {schema.name}")
+    table = column.name.lower()
+    if table in CATALOGS:
+        return CallAnalysis(None, reads_unknown=True, reason=f"system table: {table}")
+    canonical = f"PRAGMA {name.name.lower()}({table})"
+    return CallAnalysis(canonical, frozenset({sql_table(ctx.database, table)}), frozenset())
 
 
 def _labels(stmt: exp.Expression, sql: str, dialect: str) -> str | None:

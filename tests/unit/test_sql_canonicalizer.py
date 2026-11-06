@@ -89,7 +89,9 @@ def test_volatile_reads_unknown(sql):
 @pytest.mark.parametrize("sql,reason", [
     ("SELEC name FRM users", "sql parse failed"),
     ("SELECT 1; SELECT 2", "expected exactly one sql statement"),
-    ("PRAGMA table_info(users)", "unsupported statement"),
+    ("PRAGMA foreign_keys = ON", "unsupported statement"),
+    ("PRAGMA index_info(i_users)", "unsupported statement"),
+    ("PRAGMA other.table_info(users)", "qualified pragma"),
     ("BEGIN", "unsupported statement"),
     ("CREATE VIEW v AS SELECT * FROM users", "unsupported ddl"),
     ("CREATE TEMP TABLE x(a INT)", "temporary"),
@@ -184,6 +186,17 @@ async def test_executor_reuses_select_across_unrelated_update(
         "fuzzy", json.dumps([["hello"]]))
     assert await replay([hello, relevant, sql("sql", "select value from items")]) == (
         "execute", json.dumps([["world"]]))
+
+
+@pytest.mark.parametrize("spelling", [
+    "PRAGMA table_info(users)", "pragma TABLE_INFO( users )", 'PRAGMA table_info("USERS")',
+    "PRAGMA main.table_info(users)",
+])
+def test_table_info_pragma_reads_one_table(spelling):
+    analysis = SqlCanonicalizer().analyze({"sql": spelling}, CallContext(database="main"))
+    assert analysis.canonical == "PRAGMA table_info(users)"
+    assert analysis.reads == {"sql:table:main.users"} and not analysis.writes
+    assert not analysis.reads_unknown and not analysis.writes_unknown
 
 
 @pytest.mark.parametrize("sql", [
