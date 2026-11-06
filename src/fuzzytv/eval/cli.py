@@ -120,6 +120,25 @@ async def _run(args: argparse.Namespace) -> Path:
     return out
 
 
+def _merge(args: argparse.Namespace) -> None:
+    parts = [Workload.load(Path(p)) for p in args.parts]
+    kinds = {w.kind for w in parts}
+    if len(kinds) != 1:
+        raise SystemExit(f"cannot merge different kinds: {sorted(kinds)}")
+    tasks = sorted(
+        (task for w in parts for task in w.tasks),
+        key=lambda t: (len(t.task_id), t.task_id),
+    )
+    if len({t.task_id for t in tasks}) != len(tasks):
+        raise SystemExit("duplicate task IDs across parts")
+    params = {k: v for k, v in parts[0].params.items() if k != "shard"}
+    params["merged_from"] = [str(p) for p in args.parts]
+    merged = Workload(args.name or Path(args.output).stem, kinds.pop(), parts[0].seed,
+                      params, tasks)
+    merged.save(Path(args.output))
+    print(f"wrote {args.output}: {len(tasks)} tasks, {merged.total_calls} calls")
+
+
 def _plot(args: argparse.Namespace) -> None:
     from fuzzytv.eval.plots import plot_run
 
@@ -168,12 +187,19 @@ def main(argv: list[str] | None = None) -> None:
     run.add_argument("--name", help="run directory name (default: timestamp)")
     run.add_argument("--plot", action="store_true", help="also write plots")
 
+    merge = sub.add_parser("merge", help="combine trace shards into one trace")
+    merge.add_argument("parts", nargs="+")
+    merge.add_argument("-o", "--output", required=True)
+    merge.add_argument("--name")
+
     plot = sub.add_parser("plot", help="plot a finished run directory")
     plot.add_argument("run_dir")
 
     args = parser.parse_args(argv)
     if args.command == "generate":
         _generate(args)
+    elif args.command == "merge":
+        _merge(args)
     elif args.command == "run":
         out = asyncio.run(_run(args))
         if args.plot:
