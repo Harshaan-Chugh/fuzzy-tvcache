@@ -106,8 +106,10 @@ counted separately from policy executions.
 
 **Backends.** `--backend memory` (default) is an in-process stand-in for the Rust server's trie
 semantics. `tests/integration/test_eval_backend_parity.py` asserts call-for-call identical
-decisions against a real server. It has not been run yet; `slurm/eval.sbatch` runs it first.
-Until then, treat memory-backend hit counts as unconfirmed.
+decisions against a real server. It passed on Perlmutter (job 60884044, 2026-11-05) in all 24
+configurations: sql/fs × exact/canonical/relevant_state × snapshots always/never × hints
+off/on. Memory-backend hit, fuzzy-hit and false-hit counts therefore carry over to the real
+server; timings do not.
 
 **Time.**
 - Wall time on the memory backend measures our Python overhead only.
@@ -116,12 +118,20 @@ Until then, treat memory-backend hit counts as unconfirmed.
 - `modeled_tool_seconds` = count of each operation × `CostModel`. It is a projection, and only
   as good as the cost model. Real step-time numbers need the container backend.
 
-## Preliminary results (controlled; memory backend; 2026-11-05)
+## Preliminary results (controlled workloads; confirmed on the real server; 2026-11-05)
 
 `python -m fuzzytv.eval run eval/workloads/sql-small.json eval/workloads/fs-small.json`,
 every rollout validated, adaptive snapshots. Across three runs, hit and false-hit counts were
 identical. Execution ratios varied by ±0.01, because adaptive snapshotting reacts to measured
 time. Use `--snapshot always` or `--snapshot never` for exactly reproducible executions.
+
+The same run against the real TVCache server on a Perlmutter CPU node (`slurm/eval.sbatch`,
+job 60884044) reproduced every hit, fuzzy-hit and false-hit count in the table below exactly.
+Execution counts differed by at most 2 (same timing wobble). Modeled tool time was higher
+there for cached modes, e.g. sql `exact` 142.8 s vs. 122.6 s. Decisions were identical, so the
+gap comes from the adaptive policy taking more snapshots: the simulated sleeps measure
+differently on that machine. Modeled time is therefore machine-dependent and is not reported as
+a result.
 
 | workload | hints | mode | hit rate | fuzzy hits | false / validated fuzzy | executions vs. `none` |
 |---|---|---|---|---|---|---|
@@ -159,7 +169,6 @@ Findings so far:
    fuzzy hits. Upper 95% bound per cell is about 2%.
 
 Open evaluation work:
-- run `slurm/eval.sbatch` (server parity and real-server numbers);
 - run `:real` modes once `fuzzytv.sql` / `fuzzytv.fs` land;
 - connect the real terminal backend (container-manager) and real SQL traces;
 - verl RL runs (reward, step time).
