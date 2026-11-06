@@ -273,8 +273,22 @@ training recipe. Sampling, stop strings, observation text and the turn/turns-lef
 from `skyrl-gym` source. It is inference only. `--passes k` re-samples each question to approximate
 repeated epochs; the policy does not change between passes as it would during training. Run:
 `bash slurm/setup_skyrl_sql.sh` on a login node, then
-`sbatch -A <account>_g -q regular slurm/collect_skyrl_sql.sbatch`. Estimate: about 15–30 GPU-node
-minutes per pass. Not yet run on Perlmutter.
+`sbatch -A <account>_g -q regular slurm/collect_skyrl_sql.sbatch`.
+
+**Pilot run** (job 60910257, 2026-11-06; one A100 node, 20 questions × 5 samples × 1 pass,
+Qwen2.5-Coder-7B-Instruct): 100 rollouts, 334 SQL calls, 3.3 calls per rollout, 76 ended with a
+solution and 24 at the turn limit. Collection took 4 minutes. Replay, every rollout validated:
+
+| mode | hit rate | fuzzy hits | false / validated fuzzy | executions vs. `none` |
+|---|---|---|---|---|
+| exact (original TVCache) | 33.2% | 0 | — | 0.67 |
+| canonical:real | 34.4% | 0 | — | 0.66 |
+| relevant_state:real | 34.4% | 5 | 0 / 5 | 0.66 |
+
+Exact TVCache's 33.2% matches the paper's 33% on this workload. Fuzzy matching adds little here
+because no call mutates state, so only spelling differences can add hits (see the notes below).
+The pilot's rewards were mis-scored (the prompt's example `<solution>` was counted); fixed
+before the full run.
 
 Notes from SkyRL's code that matter for caching:
 - **Observation row order varies between processes.** Observations print a `frozenset` of rows,
