@@ -16,8 +16,9 @@ python -m fuzzytv.eval run eval/workloads/sql-small.json eval/workloads/fs-small
     --name baseline --plot
 ```
 
-This runs the five default modes (`none`, `exact`, `canonical:oracle`,
-`relevant_state:oracle`, `relevant_state:loose`), each with read-only hints off and on. It
+This runs the seven default modes (`none`, `exact`, `canonical:oracle`, `canonical:real`,
+`relevant_state:oracle`, `relevant_state:real`, `relevant_state:loose`), each with read-only
+hints off and on. It
 validates every rollout against an independent reference sandbox. It writes:
 
 | File | Contents |
@@ -48,9 +49,9 @@ python -m fuzzytv.eval run ... --sample-rate 0.1 --snapshot adaptive \
 python -m fuzzytv.eval plot results/eval/baseline
 ```
 
-`:real` modes use `fuzzytv.sql.SqlCanonicalizer` and `fuzzytv.fs.FsCanonicalizer`. They are
-skipped with a message until those exist. When only one exists, calls for the other tool
-analyze as unknown.
+`:real` modes use `fuzzytv.sql.SqlCanonicalizer` and `fuzzytv.fs.FsCanonicalizer` (both on
+`main`). If neither module can be imported, they are skipped with a message; when only one
+exists, calls for the other tool analyze as unknown.
 
 ## On Perlmutter
 

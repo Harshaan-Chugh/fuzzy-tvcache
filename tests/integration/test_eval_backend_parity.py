@@ -20,7 +20,10 @@ async def test_memory_backend_matches_server(
     host, port = tvcache_address
     generate = generate_sql if kind == "sql" else generate_fs
     workload = generate(seed=11, tasks=2, rollouts=6)
-    for name in ("exact", "canonical:oracle", "relevant_state:oracle"):
+    for name in (
+        "exact", "canonical:oracle", "relevant_state:oracle",
+        "canonical:real", "relevant_state:real",
+    ):
         decisions = {}
         for backend in ("memory", "server"):
             # Fixed snapshot policy and no simulated latency: decisions must

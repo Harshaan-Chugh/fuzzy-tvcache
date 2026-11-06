@@ -65,7 +65,8 @@ class Mode:
 
 
 DEFAULT_MODES = [
-    "none", "exact", "canonical:oracle", "relevant_state:oracle", "relevant_state:loose",
+    "none", "exact", "canonical:oracle", "canonical:real", "relevant_state:oracle",
+    "relevant_state:real", "relevant_state:loose",
 ]
 
 
