@@ -106,6 +106,27 @@ as `ls -l` require more state than the entry-name directory component provides.
 Cwd changes write `CWD`; resolving later relative paths still requires a sound
 `CallContext.cwd`, which this tracker does not discover or maintain.
 
+### Filesystem assumptions
+
+`FsCanonicalizer` (see `docs/taxonomy.md`) adds these to the list above. A fuzzy hit on a
+filesystem read is justified only while they hold:
+
+- Paths involve only regular files and directories. A symlink is an alias the state keys can't
+  see, so writing through one would leave the other name's key unchanged.
+- `CallContext.cwd` is the shell's logical cwd and `CDPATH` is unset. A failed `cd` must not
+  change the cwd the context provider reports.
+- `cat`, `ls`, `echo` and `cd` are not aliased or redefined. `ls` formatting and sort order are
+  fixed for the session, so terminal width and locale must match across rollouts.
+- Metadata changes go only through commands analyzed as unknown, so permission and ownership
+  stay fixed while fuzzy matching is enabled. No background process writes to the tree.
+
+Known limitation: the error from a failed `cat` names the path as typed. `cat ./x` and `cat x`
+share a canonical form, as `docs/interfaces.md` requires, and the canonicalizer can't see whether
+`x` exists. If `x` is missing, a reused value can therefore differ in its error text. The exit
+status and stdout still match. Closing this requires the cache layer to keep failed results out
+of the fuzzy index. `tests/unit/test_fs_properties.py` compares failed `cat` calls by exit status
+and stdout only, and compares every other read in full.
+
 Lineage equality is therefore not an unconditional proof of equal live contents.
 Different histories can also produce equal contents but different identities,
 causing conservative false misses. An overwrite does not erase prior ancestry.

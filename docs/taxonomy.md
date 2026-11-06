@@ -6,8 +6,8 @@
 | SQL write | `INSERT/UPDATE/DELETE` on known tables | No (execute) | Advances state of the written tables. Reads in `WHERE`/subqueries count too. |
 | SQL DDL | `CREATE/ALTER/DROP` | No | Schema change. Treat as a write to the schema, possibly global. |
 | SQL txn/session | `BEGIN`, `PRAGMA`, `ATTACH`, `SET` | No | Unknown. Forces fallback. |
-| FS read | `cat <files>`, `ls [flags] <dirs>` | Yes, for supported flags | Depends on cwd-resolved paths. `ls` depends on the directory entry set, and `-l` adds metadata. |
-| FS write | `echo > f`, `rm`, `mv`, `touch`, `mkdir` | No (execute) | Known writes. `mv` writes both paths and both parent dirs. |
+| FS read | `cat <files>`, `ls [path]` | Yes, without flags | Depends on cwd-resolved paths. `ls` depends on the directory entry set, and `-l` adds metadata. |
+| FS write | `echo > f`, `echo >> f` | No (execute) | Known writes. `rm`, `mv`, `touch`, `mkdir` are currently unknown (see below). |
 | Arbitrary shell | pipes, scripts, `python x.py`, globs | No | Unknown reads and writes. Poisons state. |
 | Volatile | `date`, `$RANDOM`, network | No | Not deterministic even with identical state. |
 | Terminal test | `TestToolCall` | Exact only | Depends on the full state. |
@@ -42,3 +42,29 @@ Initial supported set: SQL `SELECT` (single statement, no functions with side ef
 - Tests: `tests/unit/test_sql_canonicalizer.py` covers worked examples and edge cases.
   `tests/unit/test_sql_properties.py` runs randomized differential checks against SQLite, plus a
   117-statement surface corpus. Raise `FUZZYTV_SQL_FUZZ` for longer runs.
+
+## Filesystem canonicalizer (`fuzzytv.fs.FsCanonicalizer`)
+
+- A command is analyzed only if bash would read it as one simple command of literal words. Unquoted
+  control operators, expansions, globs, `~`, `#`, `!`, backslashes, brace expansion, control
+  characters and any redirect other than a trailing `echo … > target` or `>> target` are `unknown`.
+  This check runs before the command name is looked at, so `ls>out` can't pass as a read.
+- Supported: `cat <files>`, `ls [path]`, `echo [words]`, `echo [words] > file`, `echo [words] >> file`,
+  `cd <path>`. There is no flag allowlist yet: `cat`/`ls` flags are `reads_unknown`.
+- `grep`, `head`, `tail` and `wc` are `reads_unknown` only, so they don't disable later calls.
+  Everything else is `unknown`, including `rm`, `mv`, `touch` and `mkdir`: `mv a b` writes `b/a` if
+  `b` is a directory, which the command text can't show.
+- Canonical form: resolved absolute paths, each word `shlex`-quoted, so `cat 'a /app/b'` and
+  `cat a /app/b` stay distinct. It isn't guaranteed to be runnable.
+- Only leading `..` is collapsed, against the cwd. `missing/../f` fails and `link/../f` can be another
+  file, so `..` inside a path isn't resolved. A file operand ending in `/` or `.` is rejected, since
+  `cat f/` fails where `cat f` doesn't. `/proc`, `/dev` and `/sys` are never eligible.
+- `ls` with one operand: if the operand is the cwd or an ancestor of it, it must be a directory, so
+  the call reads `fs:dir` and all spellings merge. Otherwise it also reads `fs:file` (`echo > x`
+  must invalidate `ls x`) and keeps the operand as typed (`ls ./x` prints `./x` for a file), giving
+  canonical forms like `ls /app/data # as ./data`. Several operands are `reads_unknown`, because
+  `ls` prints a header spelled as typed.
+- Assumptions and the known `cat` limitation are in `docs/state-tracking.md`.
+- Tests: `tests/unit/test_fs_canonicalizer.py` covers edge cases. `tests/unit/test_fs_properties.py`
+  runs randomized differential checks against real bash in a temp tree: equal fuzzy keys give equal
+  output, and reported writes cover every change on disk. Raise `FUZZYTV_FS_FUZZ` for longer runs.

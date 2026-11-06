@@ -53,8 +53,8 @@ Build these with the helpers `sql_table`, `fs_file`, `fs_dir` and `CWD`, never b
 
 These are the target outputs for the canonicalizers. They are encoded, with more equivalent and
 non-equivalent cases, in `tests/unit/test_canonicalizer_contract.py`. Those tests expect
-`fuzzytv.sql.SqlCanonicalizer` and `fuzzytv.fs.FsCanonicalizer` (no-argument constructors) and
-skip until they exist. One addition came from the evaluation harness: SQLite labels unaliased
+`fuzzytv.sql.SqlCanonicalizer` and `fuzzytv.fs.FsCanonicalizer` (no-argument constructors).
+One addition came from the evaluation harness: SQLite labels unaliased
 result columns with the select-list text as typed, so `SUM(x)` and `sum(x)` are **not**
 equivalent when output includes headers (see `docs/evaluation.md`).
 
@@ -69,7 +69,8 @@ equivalent when output includes headers (see `docs/evaluation.md`).
 | unparseable SQL | `None` | — | — | `unknown("sql parse failed")` |
 | `cat ./data/f.txt` | `cat /app/data/f.txt` | `fs:file:/app/data/f.txt` | — | eligible |
 | `cat a.txt b.txt` | `cat /app/a.txt /app/b.txt` | both files | — | eligible |
-| `ls /app` | `ls /app` | `fs:dir:/app` | — | eligible |
+| `ls /app` | `ls /app` | `fs:dir:/app` | — | eligible (`/app` is the cwd, so it must be a directory) |
+| `ls data` | `ls /app/data # as data` | `fs:dir:/app/data`, `fs:file:/app/data` | — | eligible (may be a file: spelling reaches the output, and `echo > data` must invalidate it) |
 | `ls -l /app` | — | — | — | `reads_unknown`, `"unsupported flag -l"` |
 | `echo hi > a.txt` | `echo hi > /app/a.txt` | — | `fs:file:/app/a.txt`, `fs:dir:/app` | — |
 | `cd data` | `cd /app/data` | — | `fs:cwd` | — |
