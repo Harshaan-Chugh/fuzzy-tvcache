@@ -9,6 +9,14 @@
 | Nov 23–29 | Representative workloads. Small RL runs with the advisor's setup (verl). | All |
 | Nov 30–Dec 4 | Correctness pass. Perf analysis. Upstream PR. Figures. Report. | All |
 
+## Next steps for Rohan
+
+1. ✅ Eval harness (`src/fuzzytv/eval/`): traces, four modes, sampled validation, metrics, plots.
+2. ✅ Canonicalizer acceptance tests (skip until `sql/`, `fs/` land).
+3. Run `slurm/eval.sbatch`: server parity test, then real-server baseline numbers.
+4. `:real` modes as soon as either canonicalizer lands. Compare against `:oracle`.
+5. Real terminal backend (container-manager) and SQL agent traces. RL runs with verl.
+
 ## Next steps for Harshaan
 
 1. Design `src/fuzzytv/interfaces.py` (see `docs/interfaces.md` open questions).
