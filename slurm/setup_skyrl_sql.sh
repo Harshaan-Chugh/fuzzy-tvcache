@@ -2,8 +2,10 @@
 # One-time setup for SkyRL-SQL rollout collection. Run on a Perlmutter LOGIN
 # node (it needs internet): bash slurm/setup_skyrl_sql.sh
 #
-# Creates .venv-collect (vLLM; kept apart from .venv) and downloads, under
-# $SKYRL_SQL_DIR (default $SCRATCH/skyrl-sql):
+# Creates a vLLM environment and downloads, under $SKYRL_SQL_DIR (default
+# $SCRATCH/skyrl-sql):
+#   env/, python/          Python 3.12 + vLLM (on scratch: importing thousands of
+#                         files from $HOME on compute nodes takes ~15 minutes)
 #   data/                 NovaSky-AI/SkyRL-SQL-653-data-newfmt (train.parquet)
 #   db/                   seeklhy/OmniSQL-datasets data.zip, unzipped (~22 GB zip,
 #                         ~50 GB unzipped; SynSQL-2.5M + Spider databases)
@@ -19,16 +21,19 @@ export HF_HOME="$DIR/hf"
 
 module load python/3.13-26.8.1
 cd "$REPO"
-# vLLM wheels lag new Python releases, so .venv-collect uses a standalone
+# vLLM wheels lag new Python releases, so the environment uses a standalone
 # Python 3.12 fetched by uv (installed in user site; no admin rights needed).
+ENV="${SKYRL_SQL_ENV:-$DIR/env}"
 python3 -m pip install -q --user uv
 UV="$(python3 -m site --user-base)/bin/uv"
-[[ -x .venv-collect/bin/python ]] || "$UV" venv -q --python 3.12 .venv-collect
-VIRTUAL_ENV="$REPO/.venv-collect" "$UV" pip install -q \
+export UV_PYTHON_INSTALL_DIR="$DIR/python" UV_LINK_MODE=copy
+[[ -x "$ENV/bin/python" ]] || "$UV" venv -q --python 3.12 "$ENV"
+VIRTUAL_ENV="$ENV" "$UV" pip install -q \
     -e upstream/tvclient -e '.[collect,eval]' huggingface_hub
-.venv-collect/bin/python -c "import vllm, fuzzytv; print('vllm', vllm.__version__)"
+PY="$ENV/bin/python"
+"$PY" -c "import vllm, fuzzytv; print('vllm', vllm.__version__)"
 
-dl() { .venv-collect/bin/python - "$@" <<'PY'
+dl() { "$PY" - "$@" <<'PY'
 import sys
 from huggingface_hub import hf_hub_download, snapshot_download
 kind, repo, target = sys.argv[1:4]

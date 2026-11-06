@@ -4,7 +4,7 @@
 # Run slurm/setup_skyrl_sql.sh on a login node first. Submit with e.g.
 #   sbatch -A <account>_g -q regular slurm/collect_skyrl_sql.sbatch
 # Optional environment: PASSES (default 3), SAMPLES (5), LIMIT (questions per
-# shard; unset = all 653), SKYRL_SQL_DIR, SKYRL_SQL_MODEL.
+# shard; unset = all 653), SKYRL_SQL_DIR, SKYRL_SQL_MODEL, SKYRL_SQL_ENV.
 #SBATCH -J fuzzytv-skyrl-sql
 #SBATCH -C gpu
 #SBATCH -N 1
@@ -35,14 +35,25 @@ export XDG_CACHE_HOME="$CACHE" VLLM_CACHE_ROOT="$CACHE/vllm" \
     VLLM_CONFIG_ROOT="$CACHE/vllm-config"
 DATA="$(find "$DIR/data" -name train.parquet -print -quit)"
 DB_ROOT="$(dirname "$(find "$DIR/db" -maxdepth 3 -type d -name SynSQL-2.5M -print -quit)")"
-[[ -f "$DATA" && -d "$DB_ROOT" ]] || { echo "run slurm/setup_skyrl_sql.sh first"; exit 1; }
+ENV="${SKYRL_SQL_ENV:-$DIR/env}"
+PY="$ENV/bin/python"
+[[ -f "$DATA" && -d "$DB_ROOT" && -x "$PY" ]] || { echo "run slurm/setup_skyrl_sql.sh first"; exit 1; }
+# Pass vLLM the snapshot directory: resolving a hub name goes through
+# huggingface_hub's file locks, which took ~12 minutes on scratch.
+if [[ -d "$MODEL" ]]; then
+    MODEL_PATH="$MODEL"
+else
+    MODEL_PATH="$(ls -d "$DIR/hf/hub/models--${MODEL//\//--}"/snapshots/*/ | head -1)"
+fi
+[[ -f "$MODEL_PATH/config.json" ]] || { echo "model $MODEL not found under $DIR/hf"; exit 1; }
 nvidia-smi --query-gpu=name,memory.total --format=csv
 
+echo "start shards: $(date)"
 SHARDS=4
 pids=()
 for i in $(seq 0 $((SHARDS - 1))); do
-    CUDA_VISIBLE_DEVICES=$i .venv-collect/bin/python -m fuzzytv.eval.skyrl_sql \
-        --data "$DATA" --db-root "$DB_ROOT" --model "$MODEL" \
+    CUDA_VISIBLE_DEVICES=$i "$PY" -m fuzzytv.eval.skyrl_sql \
+        --data "$DATA" --db-root "$DB_ROOT" --model "$MODEL_PATH" \
         --samples "${SAMPLES:-5}" --passes "${PASSES:-3}" --shard "$i/$SHARDS" \
         ${LIMIT:+--limit "$LIMIT"} --seed 0 --out "$OUT/shard$i.json" \
         > "$OUT/shard$i.log" 2>&1 &
@@ -55,12 +66,13 @@ for i in "${!pids[@]}"; do
     fi
 done
 [[ $status == 0 ]] || exit 1
+echo "shards done: $(date)"
 grep -h "SQL calls" "$OUT"/shard*.log
 
 TRACE="$OUT/skyrl-sql.json"
-.venv-collect/bin/python -m fuzzytv.eval merge "$OUT"/shard?.json -o "$TRACE" --name skyrl-sql
+"$PY" -m fuzzytv.eval merge "$OUT"/shard?.json -o "$TRACE" --name skyrl-sql
 cat "$OUT"/shard?.json.rollouts.jsonl > "$OUT/rollouts.jsonl"
-.venv-collect/bin/python - "$OUT/rollouts.jsonl" <<'PY'
+"$PY" - "$OUT/rollouts.jsonl" <<'PY'
 import collections, json, sys
 rows = [json.loads(line) for line in open(sys.argv[1])]
 print(f"rollouts={len(rows)} mean_reward={sum(r['reward'] for r in rows) / len(rows):.3f}",
@@ -71,7 +83,7 @@ PY
 # Replay (CPU only). `:real` modes use fuzzytv.sql if present; the runner skips
 # them otherwise. Every rollout is validated against direct execution.
 export FUZZYTV_SKYRL_SQL_DB_ROOT="$DB_ROOT"
-.venv-collect/bin/python -m fuzzytv.eval run "$TRACE" \
+"$PY" -m fuzzytv.eval run "$TRACE" \
     --modes none exact canonical:real relevant_state:real \
     --read-only-hints off --latency-scale 0 --out "$OUT" --name replay --plot
 echo "trace: $TRACE"
