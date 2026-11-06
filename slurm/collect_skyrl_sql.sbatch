@@ -10,7 +10,7 @@
 #SBATCH -N 1
 #SBATCH --gpus-per-node=4
 #SBATCH -c 64
-#SBATCH -t 02:00:00
+#SBATCH -t 04:00:00
 #SBATCH -o /dev/null
 set -euo pipefail
 

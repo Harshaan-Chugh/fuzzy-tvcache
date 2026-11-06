@@ -122,8 +122,15 @@ def skyrl_observation(path: Path, sql: str | None, turns_left: int) -> str:
     return f"\n\n<observation>{obs}\n{reminder}</observation>\n\n"
 
 
+def response(trajectory: "Trajectory") -> str:
+    """Everything the model generated (with observations), without the prompt."""
+    return trajectory.text[trajectory.prompt_chars :]
+
+
 def solution_reward(text: str, gold_sql: str, path: Path) -> float:
-    """Execution-match reward (format checks simplified; for sanity statistics)."""
+    """Execution-match reward on the response only (SkyRL never scores the
+    prompt, whose instructions contain an example <solution>). Format checks
+    are simplified; this is for sanity statistics."""
     match = re.findall(r"<solution>(.*?)</solution>", text, re.DOTALL)
     if len(match) != 1:
         return -1.0
@@ -138,6 +145,7 @@ class Trajectory:
     sample: int
     pass_index: int
     text: str
+    prompt_chars: int = 0  # text[:prompt_chars] is the rendered prompt
     turns: int = 0
     calls: list[str] = field(default_factory=list)
     done: bool = False
@@ -167,11 +175,13 @@ def collect(
     """
     finished: list[Trajectory] = []
     for pass_index in range(passes):
-        active = [
-            Trajectory(task_index, sample, pass_index, render(task["prompt"]))
-            for task_index, task in enumerate(tasks)
-            for sample in range(samples)
-        ]
+        active = []
+        for task_index, task in enumerate(tasks):
+            prompt = render(task["prompt"])
+            active += [
+                Trajectory(task_index, sample, pass_index, prompt, len(prompt))
+                for sample in range(samples)
+            ]
         while active:
             outputs = generate([t.text for t in active])
             still_active = []
@@ -291,7 +301,7 @@ def main(argv: list[str] | None = None) -> None:
         for t in trajectories:
             task = tasks[t.task]
             reward = solution_reward(
-                t.text, task["gold_sql"], db_file(args.db_root, task["data"], task["db_id"])
+                response(t), task["gold_sql"], db_file(args.db_root, task["data"], task["db_id"])
             )
             handle.write(json.dumps({
                 **asdict(t), "index": task["index"], "db_id": task["db_id"], "reward": reward,

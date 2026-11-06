@@ -17,6 +17,7 @@ from fuzzytv.eval.skyrl_sql import (  # noqa: E402
     db_file,
     parse_sql,
     skyrl_observation,
+    response,
     solution_reward,
     to_workload,
 )
@@ -101,7 +102,14 @@ def test_collect_follows_env_turn_rules(db_root: Path) -> None:
     ]
     assert "You have 5 turns left" in t.text and "You have 3 turns left" in t.text
     assert INVALID_ACTION in t.text
-    assert solution_reward(t.text, TASK["gold_sql"], db_file(db_root, "synsql", "farm")) == 1.0
+    gold, path = TASK["gold_sql"], db_file(db_root, "synsql", "farm")
+    assert solution_reward(response(t), gold, path) == 1.0
+    # The prompt's own example <solution> must not count.
+    example = [{"role": "user", "content": "<solution>SELECT 1</solution>"}]
+    with_example = {**TASK, "prompt": example}
+    (u,) = collect([with_example], scripted(script), render, db_root, samples=1)
+    assert solution_reward(response(u), gold, path) == 1.0
+    assert solution_reward(u.text, gold, path) == -1.0
 
 
 def test_max_turns_does_not_execute_last_action(db_root: Path) -> None:
