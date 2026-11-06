@@ -68,7 +68,7 @@ class Step:
     call: dict[str, Any]
     cwd: str | None
     database: str | None
-    oracle: dict[str, Any]
+    oracle: dict[str, Any] | None  # None for collected (real) traces
     intent: str  # generator label, for analysis and plots only
 
     @property

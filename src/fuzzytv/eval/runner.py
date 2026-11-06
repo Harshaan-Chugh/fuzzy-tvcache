@@ -152,7 +152,8 @@ class CanonicalKeyedCall(ToolCall):
 
 
 def _oracle_read_only(step: Step) -> bool:
-    return not step.oracle["writes"] and not step.oracle["writes_unknown"]
+    oracle = step.oracle
+    return oracle is not None and not oracle["writes"] and not oracle["writes_unknown"]
 
 
 def _initial_state_id(task: Task) -> str:
@@ -242,7 +243,7 @@ async def run_mode(workload: Workload, mode: Mode, config: RunConfig) -> ModeRes
                 )
                 values = await _run_rollout(
                     mode, config, task, task_key, steps, sandbox_class, timed,
-                    counters, rollout_index, records, reasons,
+                    counters, rollout_index, records, reasons, workload.params,
                 )
                 for record, value, ref in zip(
                     records[-len(steps):], values, reference or [None] * len(steps),
@@ -269,7 +270,7 @@ async def _run_rollout(
     mode: Mode, config: RunConfig, task: Task, task_key: str, steps: list[Step],
     sandbox_class: type[Sandbox], timed: TimedCanonicalizer | None,
     counters: SandboxCounters, rollout_index: int, records: list[CallRecord],
-    reasons: Counter,
+    reasons: Counter, workload_params: dict[str, Any],
 ) -> list[str]:
     values: list[str] = []
 
@@ -280,7 +281,7 @@ async def _run_rollout(
             mode=mode.name, task_id=task.task_id, rollout=rollout_index,
             step=step_index, intent=step.intent, source=source,
             executions=executions, seconds=seconds, validated=False, matched=None,
-            oracle_eligible=(
+            oracle_eligible=oracle is not None and (
                 oracle["canonical"] is not None and not oracle["writes"]
                 and not oracle["reads_unknown"] and not oracle["writes_unknown"]
             ),
@@ -318,11 +319,15 @@ async def _run_rollout(
     else:
         executor = TvcacheToolExecutor(sandbox_class, EvalCall, task_key, **options)
 
+    # Collected traces may declare every call stateless (SkyRL-SQL, as in the paper).
+    workload_mutates = bool(workload_params.get("will_mutate_state", True))
     history: list[ToolCall] = []
     async with executor:
         for index, step in enumerate(steps):
             current["ctx"] = step.ctx
-            mutating = not (config.read_only_hints and _oracle_read_only(step))
+            mutating = workload_mutates and not (
+                config.read_only_hints and _oracle_read_only(step)
+            )
             if mode.kind == "canonical":
                 assert timed is not None
                 analysis = timed.analyze(step.call, step.ctx)

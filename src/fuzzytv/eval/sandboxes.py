@@ -15,6 +15,7 @@ import asyncio
 import copy
 import itertools
 import json
+import os
 import posixpath
 import shlex
 import sqlite3
@@ -340,4 +341,70 @@ def shell_sandbox_class(
     return ShellSandbox
 
 
-SANDBOX_FACTORIES = {"sql": sqlite_sandbox_class, "fs": shell_sandbox_class}
+# ------------------------------------------------------------- SkyRL-SQL
+
+
+SKYRL_DB_ROOT_ENV = "FUZZYTV_SKYRL_SQL_DB_ROOT"
+
+
+def skyrl_sql_sandbox_class(
+    initial_state: dict[str, Any], counters: SandboxCounters
+) -> type[Sandbox]:
+    """`initial_state = {"data": "synsql"|"spider"|..., "db_id": ...}`.
+
+    Executes like SkyRL's tool (rolled-back transaction on the real database
+    file under $FUZZYTV_SKYRL_SQL_DB_ROOT). Every call is read-only, so all
+    sandboxes and snapshots share the file. The value lists the result rows
+    sorted, because SkyRL's frozenset row order varies between processes;
+    the paper's cached value is the same result set.
+    """
+    from fuzzytv.eval.skyrl_sql import db_file, run_rolled_back
+
+    root = os.environ.get(SKYRL_DB_ROOT_ENV)
+    if not root:
+        raise RuntimeError(f"set {SKYRL_DB_ROOT_ENV} to the OmniSQL data directory")
+    path = db_file(root, initial_state["data"], initial_state["db_id"])
+    if not path.exists():
+        raise RuntimeError(f"database not found: {path}")
+    ids = itertools.count()
+
+    class SkyrlSqlSandbox(Sandbox):
+        async def start(self) -> None:
+            if self.env_id is None:
+                counters.starts += 1
+                await counters.pause("start")
+            else:
+                counters.restores += 1
+                await counters.pause("restore")
+            self.env_id = f"skyrl-live-{next(ids)}"
+            counters.live.add(self.env_id)
+
+        async def fork(self) -> Sandbox:
+            counters.forks += 1
+            await counters.pause("fork")
+            return SkyrlSqlSandbox(self.task_name, f"skyrl-snap-{next(ids)}")
+
+        async def execute(self, tool_call: ToolCall) -> str:
+            counters.executes += 1
+            await counters.pause("execute")
+            call = tool_call.to_dict()
+            if call.get("tool") != SQL_TOOL or not isinstance(call.get("query"), str):
+                return _result(2, f"unsupported tool {call.get('tool')!r}")
+            result = await asyncio.to_thread(run_rolled_back, path, call["query"])
+            if isinstance(result, frozenset):
+                rows = sorted(result, key=repr)
+                return _result(0, json.dumps(rows, default=repr))
+            return _result(1, result)
+
+        async def stop(self) -> None:
+            counters.stops += 1
+            counters.live.discard(self.env_id)
+
+    return SkyrlSqlSandbox
+
+
+SANDBOX_FACTORIES = {
+    "sql": sqlite_sandbox_class,
+    "fs": shell_sandbox_class,
+    "skyrl-sql": skyrl_sql_sandbox_class,
+}
