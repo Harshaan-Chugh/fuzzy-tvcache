@@ -19,7 +19,7 @@ and filesystem canonicalizers, and an evaluation harness that validates every re
 controlled workloads the real canonicalizers reach about 90% of the spec-level oracle's fuzzy
 hits with 0 false hits in 681 validated fuzzy hits. Real-workload rollouts (SkyRL-SQL,
 terminal-bench) and RL runs are next.
-See [docs/state-tracking.md](docs/state-tracking.md) and
+Poster, report and team guide: [midpoint/](midpoint/). See [docs/state-tracking.md](docs/state-tracking.md) and
 [docs/evaluation.md](docs/evaluation.md).
 
 | Who | Area | Code |
@@ -40,6 +40,7 @@ eval/                   workloads and benchmark scripts
 slurm/                  compute-node job scripts
 configs/                example configs (local copies are gitignored)
 docs/                   architecture, interfaces, state tracking, taxonomy, evaluation, roadmap
+midpoint/               midpoint poster, report and team guide
 ```
 
 Start with [docs/architecture.md](docs/architecture.md). It covers how upstream TVCache works and

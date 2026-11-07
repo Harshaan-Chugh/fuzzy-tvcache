@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fuzzy Cache Lookups for Partially Stateful Tool Calls</title>
+<style>
+  /* Laid out at 1440x1920 px (3:4); prints at 36 in wide x 48 in tall. */
+  @page { size: 36in 48in; margin: 0; }
+  @media print { html { zoom: 2.4; } }
+
+  :root {
+    --ink: #1a1a1a;
+    --ink-2: #1a1a1a;
+    --ink-3: #1a1a1a;
+    --rule: #d6d6d6;
+    --grid: #ececec;
+    --red: #b31b1b;
+    --exact: #2a78d6;
+    --ours: #eb6834;
+    --oracle: #1baf7a;
+    --loose: #8c8c8c;
+    --code: #f2f2f0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    position: relative;
+    width: 1440px; height: 1920px; overflow: hidden; background: #fff; color: var(--ink);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 21.5px; line-height: 1.45;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  code { font-family: Menlo, Consolas, monospace; font-size: 0.84em; background: var(--code); padding: 0 4px; }
+
+  header { padding: 34px 56px 22px; border-bottom: 6px solid var(--red); display: flex; justify-content: space-between; align-items: flex-end; }
+  header h1 { margin: 0 0 10px; font-size: 49px; white-space: nowrap; line-height: 1.05; font-weight: 700; letter-spacing: -0.5px; }
+  header .authors { font-size: 23px; }
+  header .affil { font-size: 19px; color: var(--ink-2); margin-top: 3px; }
+  header .logo { text-align: right; font-size: 21px; line-height: 1.3; color: var(--red); font-weight: 700; }
+  header .logo span { display: block; font-weight: 400; color: var(--ink-2); font-size: 18px; }
+
+  .finding { padding: 18px 56px 16px; font-size: 29px; line-height: 1.3; border-bottom: 1px solid var(--rule); }
+  .finding b { color: var(--red); }
+
+  main { display: grid; grid-template-columns: 1fr 1fr; column-gap: 56px; padding: 22px 56px 0; }
+  .col > * + * { margin-top: 24px; }
+  h2 { font-size: 30px; margin: 0 0 8px; padding-bottom: 4px; border-bottom: 2px solid var(--red); color: var(--ink); }
+  p { margin: 0 0 9px; }
+  ul, ol { margin: 0 0 8px; padding-left: 24px; }
+  li { margin-bottom: 4px; }
+  .note { font-size: 19px; color: var(--ink-2); }
+  figure { margin: 0; }
+  figcaption { font-size: 19px; color: var(--ink-2); margin-top: 2px; }
+  figcaption b { color: var(--ink); }
+  .key { display: flex; gap: 22px; font-size: 18px; color: var(--ink-2); margin: 2px 0 4px; }
+  .key i { display: inline-block; width: 15px; height: 15px; margin-right: 6px; vertical-align: -1px; }
+  svg text { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+  svg text.m { font-family: Menlo, Consolas, monospace; }
+
+  .ex { font-family: Menlo, Consolas, monospace; font-size: 17px; line-height: 1.55; background: var(--code); padding: 8px 12px; margin: 8px 0; white-space: pre; }
+  .ex .c { color: var(--ink-3); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 20px; margin: 4px 0 8px; }
+  th, td { padding: 4px 6px; text-align: right; font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { border-bottom: 1.5px solid var(--ink); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: 1.5px solid var(--ink); }
+
+  .refs { font-size: 15.5px; color: #555; line-height: 1.35; }
+  .refs ol { padding-left: 20px; margin: 0; columns: 2; column-gap: 40px; flex: 1; }
+  footer.refs { position: absolute; left: 56px; right: 56px; bottom: 26px; display: flex; gap: 40px; border-top: 1px solid var(--rule); padding-top: 12px; }
+  footer.refs div { text-align: right; }
+  .refs li { margin-bottom: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Fuzzy Cache Lookups for Partially Stateful Tool Calls</h1>
+    <div class="authors">Harshaan Chugh, Kevin Rodriguez, Etienne Sasenarine, Rohan Shankar &nbsp;·&nbsp; Advisor: Bhaskar Kataria</div>
+    <div class="affil">Cornell University &nbsp;·&nbsp; Team 30 &nbsp;·&nbsp; Midpoint, November 2026</div>
+  </div>
+</header>
+
+<div class="finding">
+  If a cache looks at what each tool call actually <i>reads</i>, it can serve <b>41% of SQL calls</b> from cache instead of TVCache's 6%,
+  with <b>no wrong results in 681 checked reuses</b>.
+</div>
+
+<main>
+  <div class="col">
+    <section>
+      <h2>Motivation</h2>
+      <p>Agentic RL samples many rollouts per task, and they repeat tool calls. TVCache [1] reuses a
+      result only if the call <i>and every earlier state-changing call</i> match exactly, so it misses
+      respelled queries and reads after unrelated writes.</p>
+</section>
+
+    <figure>
+<svg width="100%" viewBox="0 0 638 352" role="img" aria-label="TVCache prefix tree vs. our fuzzy index" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#1a1a1a"/></marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#eb6834"/></marker>
+  </defs>
+  <text x="0" y="16" font-size="18" font-weight="700" fill="#1a1a1a">TVCache: tree of exact call strings</text>
+  <!-- root -->
+  <circle cx="14" cy="104" r="7" fill="#1a1a1a"/>
+  <text x="14" y="134" text-anchor="middle" font-size="15" fill="#1a1a1a">task</text>
+  <path d="M21 100 C 36 76, 44 54, 58 54" fill="none" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#ar)"/>
+  <path d="M21 108 C 36 132, 44 154, 58 154" fill="none" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="60" y="36" width="268" height="36" fill="#fff" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="70" y="58" class="m" font-size="12" fill="#1a1a1a">INSERT INTO orders VALUES (7,'pen')</text>
+  <line x1="328" y1="54" x2="346" y2="54" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="348" y="36" width="288" height="36" fill="#eaf2fc" stroke="#2a78d6" stroke-width="2"/>
+  <text x="358" y="58" class="m" font-size="12" fill="#1a1a1a">SELECT name FROM users WHERE id=3</text>
+  <text x="358" y="92" font-size="15.5" fill="#1a1a1a"><tspan font-weight="700">Rollout A:</tspan> executed, 'Ann' stored</text>
+  <rect x="60" y="136" width="268" height="36" fill="#fff" stroke="#1a1a1a" stroke-width="1.5"/>
+  <text x="70" y="158" class="m" font-size="12" fill="#1a1a1a">INSERT INTO orders VALUES (9,'ink')</text>
+  <line x1="328" y1="154" x2="346" y2="154" stroke="#1a1a1a" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+  <rect x="348" y="136" width="288" height="36" fill="#fff" stroke="#1a1a1a" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="358" y="158" class="m" font-size="12" fill="#1a1a1a">select name from USERS where id=3</text>
+  <text x="358" y="192" font-size="15.5" fill="#1a1a1a"><tspan font-weight="700">Rollout B:</tspan> different path, so a miss</text>
+
+  <line x1="0" y1="212" x2="638" y2="212" stroke="#d6d6d6" stroke-width="1"/>
+  <text x="0" y="238" font-size="18" font-weight="700" fill="#1a1a1a">Ours: checked after an exact miss</text>
+  <!-- key box -->
+  <rect x="0" y="252" width="440" height="96" fill="#fdf0ea" stroke="#eb6834" stroke-width="2"/>
+  <text x="12" y="274" font-size="15.5" fill="#1a1a1a">canonical call</text>
+  <text x="12" y="293" class="m" font-size="12" fill="#1a1a1a">SELECT name FROM users WHERE id = 3</text>
+  <text x="12" y="318" font-size="15.5" fill="#1a1a1a">+ version of what it reads</text>
+  <text x="12" y="337" class="m" font-size="12" fill="#1a1a1a">users @ v0   (orders writes ignored)</text>
+  <line x1="440" y1="300" x2="482" y2="300" stroke="#eb6834" stroke-width="2" marker-end="url(#ao)"/>
+  <rect x="486" y="274" width="150" height="52" fill="#fff" stroke="#eb6834" stroke-width="2"/>
+  <text x="561" y="298" text-anchor="middle" font-size="16" font-weight="700" fill="#1a1a1a">same key: hit</text>
+  <text x="561" y="317" text-anchor="middle" font-size="15" fill="#1a1a1a">returns 'Ann'</text>
+</svg>
+<figcaption><b>Figure 1.</b> TVCache keys a result on the full path of state-changing calls, so rollout B misses. We key a read on its canonical text and the versions of the state it reads, so A and B share one entry.</figcaption>
+</figure>
+
+    <section>
+      <h2>Approach</h2>
+      <ol>
+        <li><b>Canonicalize</b> each call: SQL with SQLGlot [2]; <code>cat</code>, <code>ls</code>,
+        <code>echo</code>, <code>cd</code> with absolute paths.</li>
+        <li><b>Find the state it reads and writes</b>: tables, files, the working directory.</li>
+        <li><b>Version each piece of state</b> by hashing the writes to it.</li>
+        <li><b>Exact lookup first</b>; on a miss, key a read by its canonical text and the versions of
+        the state it reads.</li>
+      </ol>
+      <p>Writes always execute; only reads are reused. Anything we can't analyze (pipes,
+      <code>random()</code>, unknown commands) falls back to plain TVCache.</p>
+    </section>
+
+    <section>
+      <h2>Evaluation setup</h2>
+      <p>1,297 generated SQL and shell calls; every reused value is checked against real execution.
+      <i>Oracle</i>: a perfect canonicalizer. <i>Hints</i>: read-only calls declared to TVCache.</p>
+    </section>
+
+    <section>
+      <h2>Next steps</h2>
+      <ul>
+        <li>Terminal-bench rollouts on a Docker host, with per-command output.</li>
+        <li>Wider shell coverage and a state key for <code>sqlite_master</code>.</li>
+        <li>RL runs with verl; contribute the lookup to TVCache.</li>
+      </ul>
+    </section>
+  </div>
+
+  <div class="col">
+    <figure>
+      <h2>Results</h2>
+      <div class="key">
+        <span><i style="background:var(--exact)"></i>exact (TVCache)</span>
+        <span><i style="background:var(--ours)"></i>ours</span>
+        <span><i style="background:var(--oracle)"></i>oracle</span>
+      </div>
+      <svg id="hits" width="100%" viewBox="0 0 638 276" role="img" aria-label="Hit rates"></svg>
+      <figcaption><b>Figure 2.</b> Share of calls served from cache. Ours reaches about 90% of the oracle.</figcaption>
+    </figure>
+
+    <figure style="margin-top:14px">
+      <div class="key">
+        <span><i style="background:var(--ours)"></i>ours</span>
+        <span><i style="background:var(--loose)"></i>ours without read tracking</span>
+      </div>
+      <svg id="false" width="100%" viewBox="0 0 638 204" role="img" aria-label="Wrong fuzzy hits"></svg>
+      <figcaption><b>Figure 3.</b> Wrong fuzzy hits (95% Wilson intervals). Without read tracking, 18–24% are wrong.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="key">
+        <span><i style="background:var(--exact)"></i>exact</span>
+        <span><i style="background:var(--ours)"></i>ours</span>
+        <span><i style="background:var(--oracle)"></i>oracle</span>
+      </div>
+      <svg id="saved" width="100%" viewBox="0 0 638 132" role="img" aria-label="Executions saved"></svg>
+      <figcaption><b>Figure 4.</b> Executions saved vs. no cache, with hints.</figcaption>
+    </figure>
+
+    <section>
+      <h2>Real rollouts: SkyRL-SQL</h2>
+      <p>Qwen2.5-Coder-7B, 20 questions × 5 samples [3] (pilot):</p>
+      <table>
+        <thead><tr><th>mode</th><th>hit rate</th><th>wrong hits</th><th>executions</th></tr></thead>
+        <tbody>
+          <tr><td>exact (TVCache)</td><td>33.2%</td><td>–</td><td>0.67</td></tr>
+          <tr><td>ours</td><td>34.4%</td><td>0 / 5</td><td>0.66</td></tr>
+        </tbody>
+      </table>
+      <p>TVCache's 33.2% matches the 33% in [1]. These queries never write, so only spelling can add hits.</p>
+      <svg id="cov" width="100%" viewBox="0 0 638 84" role="img" aria-label="Coverage"></svg>
+      <p class="note">Share of reference calls our canonicalizers accept.</p>
+    </section>
+  </div>
+</main>
+
+<footer class="refs">
+  <ol>
+    <li>TVCache: tool-call caching for agentic RL. arXiv 2602.10986.</li>
+    <li>SQLGlot. github.com/tobymao/sqlglot</li>
+    <li>NovaSky-AI. SkyRL-SQL-653 dataset and environment.</li>
+    <li>Terminal-bench, via B. Kataria's container-manager.</li>
+  </ol>
+  <div>Code: github.com/Harshaan-Chugh/fuzzy-tvcache<br>Compute: NERSC Perlmutter</div>
+</footer>
+
+<script>
+const C = { exact: "var(--exact)", ours: "var(--ours)", oracle: "var(--oracle)", loose: "var(--loose)" };
+const NS = "http://www.w3.org/2000/svg";
+function el(svg, tag, attrs, text) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  svg.appendChild(e); return e;
+}
+function bar(svg, x, y, w, h, fill, tip) {
+  const p = el(svg, "rect", { x, y, width: Math.max(w, 1), height: h, fill });
+  if (tip) el(p, "title", {}, tip);
+}
+function axis(svg, x0, x1, yTop, yBot, max, step, fmt) {
+  for (let v = 0; v <= max + 1e-9; v += step) {
+    const x = x0 + (x1 - x0) * v / max;
+    el(svg, "line", { x1: x, x2: x, y1: yTop, y2: yBot, stroke: "var(--grid)", "stroke-width": 1 });
+    el(svg, "text", { x, y: yBot + 20, "text-anchor": "middle", "font-size": 16, fill: "var(--ink)" }, fmt(v));
+  }
+}
+function groups(svg, { data, series, x0, x1, max, step, barH, gap, groupGap, top, fmt, valueLabel }) {
+  let y = top;
+  const yStart = y, rows = [];
+  for (const g of data) {
+    const gy = y;
+    series.forEach((s, i) => { rows.push({ g, s, i, y }); y += barH + gap; });
+    rows.push({ groupLabel: g.label, sub: g.sub, y: gy, h: y - gap - gy });
+    y += groupGap - gap;
+  }
+  const yEnd = y - groupGap + gap;
+  axis(svg, x0, x1, yStart - 4, yEnd + 4, max, step, fmt);
+  for (const r of rows) {
+    if (r.groupLabel !== undefined) {
+      const cy = r.y + r.h / 2;
+      el(svg, "text", { x: x0 - 12, y: cy - (r.sub ? 3 : -5), "text-anchor": "end", "font-size": 18, "font-weight": 600, fill: "var(--ink)" }, r.groupLabel);
+      if (r.sub) el(svg, "text", { x: x0 - 12, y: cy + 17, "text-anchor": "end", "font-size": 16, fill: "var(--ink-2)" }, r.sub);
+      continue;
+    }
+    const v = r.g.values[r.i];
+    const w = (x1 - x0) * Math.max(v, 0) / max;
+    bar(svg, x0, r.y, w, barH, C[r.s], `${r.g.label}${r.g.sub ? ", " + r.g.sub : ""}: ${valueLabel(r.g, r.i)}`);
+    let endX = x0 + w;
+    if (r.g.ci) {
+      const [lo, hi] = r.g.ci[r.i];
+      const cy = r.y + barH / 2, xl = x0 + (x1 - x0) * lo / max, xh = x0 + (x1 - x0) * hi / max;
+      el(svg, "line", { x1: xl, x2: xh, y1: cy, y2: cy, stroke: "var(--ink)", "stroke-width": 1.2 });
+      for (const xx of [xl, xh]) el(svg, "line", { x1: xx, x2: xx, y1: cy - 4, y2: cy + 4, stroke: "var(--ink)", "stroke-width": 1.2 });
+      endX = Math.max(endX, xh);
+    }
+    el(svg, "text", { x: endX + 6, y: r.y + barH / 2 + 5, "font-size": 16.5, fill: "var(--ink)" }, valueLabel(r.g, r.i));
+  }
+  el(svg, "line", { x1: x0, x2: x0, y1: yStart - 4, y2: yEnd + 4, stroke: "var(--ink)", "stroke-width": 1 });
+  svg.setAttribute("viewBox", `0 0 638 ${yEnd + 30}`);
+}
+
+groups(document.getElementById("hits"), {
+  data: [
+    { label: "SQL", sub: "hints off", values: [5.9, 40.8, 45.2] },
+    { label: "SQL", sub: "hints on", values: [20.1, 44.8, 47.8] },
+    { label: "Shell", sub: "hints off", values: [2.2, 26.4, 28.7] },
+    { label: "Shell", sub: "hints on", values: [11.0, 28.8, 31.2] },
+  ],
+  series: ["exact", "ours", "oracle"], x0: 100, x1: 560, max: 50, step: 10,
+  barH: 17, gap: 1, groupGap: 15, top: 6, fmt: v => v + "%",
+  valueLabel: (g, i) => g.values[i].toFixed(1) + "%",
+});
+
+const fh = [[0, 184, 45, 256], [0, 151, 46, 231], [0, 186, 87, 386], [0, 160, 87, 364]];
+function wilson(k, n) {
+  const z = 1.96, p = k / n, d = 1 + z * z / n, c = p + z * z / (2 * n);
+  const m = z * Math.sqrt(p * (1 - p) / n + z * z / (4 * n * n));
+  return [100 * Math.max(0, (c - m) / d), 100 * (c + m) / d];
+}
+const labels = [["SQL", "hints off"], ["SQL", "hints on"], ["Shell", "hints off"], ["Shell", "hints on"]];
+groups(document.getElementById("false"), {
+  data: fh.map(([k1, n1, k2, n2], j) => ({
+    label: labels[j][0], sub: labels[j][1], counts: [[k1, n1], [k2, n2]],
+    values: [100 * k1 / n1, 100 * k2 / n2], ci: [wilson(k1, n1), wilson(k2, n2)],
+  })),
+  series: ["ours", "loose"], x0: 100, x1: 450, max: 30, step: 10,
+  barH: 17, gap: 1, groupGap: 15, top: 6, fmt: v => v + "%",
+  valueLabel: (g, i) => i ? `${g.values[i].toFixed(1)}% (${g.counts[i][0]}/${g.counts[i][1]})` : `0/${g.counts[i][1]}`,
+});
+
+groups(document.getElementById("saved"), {
+  data: [{ label: "SQL", values: [17, 42, 45] }, { label: "Shell", values: [9, 27, 29] }],
+  series: ["exact", "ours", "oracle"], x0: 100, x1: 560, max: 50, step: 10,
+  barH: 17, gap: 1, groupGap: 15, top: 6, fmt: v => v + "%",
+  valueLabel: (g, i) => g.values[i] + "%",
+});
+
+groups(document.getElementById("cov"), {
+  data: [{ label: "SkyRL-SQL", values: [96.6] }, { label: "terminal-bench", values: [15.2] }],
+  series: ["ours"], x0: 150, x1: 560, max: 100, step: 25,
+  barH: 20, gap: 1, groupGap: 12, top: 4, fmt: v => v + "%",
+  valueLabel: (g, i) => g.values[i] + "%",
+});
+</script>
+</body>
+</html>

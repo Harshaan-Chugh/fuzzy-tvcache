@@ -53,7 +53,7 @@ reproduced on the real server (job 60891246).
 
 ## Results so far
 
-![hit rates](figures/midpoint/hit_rates.png)
+![hit rates](../docs/figures/midpoint/hit_rates.png)
 
 | | SQL, hints off | SQL, hints on | fs, hints off | fs, hints on |
 |---|---|---|---|---|
