@@ -242,12 +242,13 @@ async def run_mode(workload: Workload, mode: Mode, config: RunConfig) -> ModeRes
                     await _reference_values(reference_class, task_key, steps)
                     if sample else None
                 )
+                first = len(records)
                 values = await _run_rollout(
                     mode, config, task, task_key, steps, sandbox_class, timed,
                     counters, rollout_index, records, reasons, workload.params,
                 )
                 for record, value, ref in zip(
-                    records[-len(steps):], values, reference or [None] * len(steps),
+                    records[first:], values, reference or [None] * len(steps),
                     strict=True,
                 ):
                     record.validated = ref is not None

@@ -247,3 +247,16 @@ def test_wilson_interval() -> None:
     assert low == 0.0 and 0 < high < 0.02
     low, high = wilson_interval(50, 100)
     assert low < 0.5 < high
+
+
+@pytest.mark.parametrize("name", ["none", "exact", "relevant_state:oracle"])
+async def test_rollouts_without_tool_calls_are_skipped(name: str) -> None:
+    # A model can answer without calling a tool; replay must not misalign records.
+    workload = small("sql")
+    workload.tasks[0].rollouts.insert(1, [])
+    workload.tasks[1].rollouts.append([])
+    result = await run_mode(workload, Mode.parse(name), FAST)
+    s = summarize(result, workload, FAST)
+    assert s["calls"] == workload.total_calls
+    assert s["validated_calls"] == s["calls"]
+    assert s["false_exact_hits"] == s["false_fuzzy_hits"] == 0
