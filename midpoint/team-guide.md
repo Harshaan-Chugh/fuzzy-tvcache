@@ -10,7 +10,7 @@ Where each section shows up on the poster (`midpoint-poster.pdf`):
 
 | Poster panel | Guide section |
 | --- | --- |
-| Main finding (the sentence under the title) | 1, 9 |
+| Opening question (the line under the title) | 1, 2 |
 | Motivation and Figure 1 (TVCache tree vs. our lookup, rollouts A and B) | 1, 2, 4, 5 |
 | Approach, steps 1–2 (canonicalize; reads and writes) | 3, 6, 7 |
 | Approach, steps 3–4 (versions; exact then fuzzy lookup) | 4, 5 |
